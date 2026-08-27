@@ -1,0 +1,8 @@
+# The app has no package dependencies (system frameworks only); the one thing
+# worth keeping current is the Actions used by CI.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"

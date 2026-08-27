@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+      AgentHearth ships with a Hardened Runtime (required for notarization) but
+      without the App Sandbox: it reads the Claude keychain item, opens loopback
+      sockets, and spawns /usr/bin/ssh, /usr/bin/python3 and /usr/bin/osascript,
+      none of which the sandbox would allow. Developer ID distribution (outside
+      the Mac App Store) permits an unsandboxed, hardened app.
+
+      Under the Hardened Runtime the app may not send Apple events by default, so
+      this single entitlement is what lets it drive Terminal to resume a session.
+      The user still sees the system automation prompt (NSAppleEventsUsageDescription).
+    -->
+    <key>com.apple.security.automation.apple-events</key>
+    <true/>
+</dict>
+</plist>
