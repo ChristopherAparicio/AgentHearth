@@ -1,0 +1,146 @@
+name: AgentHearth
+
+options:
+  bundleIdPrefix: com.guardix
+  deploymentTarget:
+    macOS: "14.0"
+  xcodeVersion: "26.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+
+targets:
+  AgentHearthDomain:
+    type: framework
+    platform: macOS
+    sources:
+      - Sources/AgentHearthCore/Domain
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.guardix.agenthearth.domain
+        GENERATE_INFOPLIST_FILE: YES
+        DEFINES_MODULE: YES
+
+  AgentHearthApplication:
+    type: framework
+    platform: macOS
+    sources:
+      - Sources/AgentHearthCore/Application
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.guardix.agenthearth.application
+        GENERATE_INFOPLIST_FILE: YES
+        DEFINES_MODULE: YES
+    dependencies:
+      - target: AgentHearthDomain
+
+  AgentHearthInfrastructure:
+    type: framework
+    platform: macOS
+    sources:
+      - Sources/AgentHearthCore/Infrastructure
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.guardix.agenthearth.infrastructure
+        GENERATE_INFOPLIST_FILE: YES
+        DEFINES_MODULE: YES
+    dependencies:
+      - target: AgentHearthDomain
+      - target: AgentHearthApplication
+      - sdk: libsqlite3.tbd
+
+  AgentHearthCore:
+    type: framework
+    platform: macOS
+    sources:
+      - Sources/AgentHearthCore/Umbrella
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.guardix.agenthearth.core
+        GENERATE_INFOPLIST_FILE: YES
+        DEFINES_MODULE: YES
+    dependencies:
+      - target: AgentHearthDomain
+      - target: AgentHearthApplication
+      - target: AgentHearthInfrastructure
+
+  AgentHearth:
+    type: application
+    platform: macOS
+    sources:
+      - Sources/AgentHearthApp
+      - path: Integrations/OpenCode
+        type: folder
+        buildPhase: resources
+      - path: Integrations/ClaudeCode
+        type: folder
+        buildPhase: resources
+      - path: Integrations/Codex
+        type: folder
+        buildPhase: resources
+      - path: Integrations/Remote
+        type: folder
+        buildPhase: resources
+    resources:
+      - Resources
+    dependencies:
+      - target: AgentHearthCore
+        embed: true
+      - target: AgentHearthDomain
+        embed: true
+      - target: AgentHearthApplication
+        embed: true
+      - target: AgentHearthInfrastructure
+        embed: true
+    info:
+      path: Config/Info.plist
+      properties:
+        CFBundleDisplayName: AgentHearth
+        CFBundleName: AgentHearth
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+        LSApplicationCategoryType: public.app-category.developer-tools
+        LSUIElement: true
+        NSAppleEventsUsageDescription: AgentHearth uses Terminal to resume the coding-agent session you select.
+        NSHighResolutionCapable: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.guardix.agenthearth
+        PRODUCT_NAME: AgentHearth
+        CODE_SIGN_STYLE: Automatic
+        # Required for notarization. Debug/test builds pass
+        # CODE_SIGNING_ALLOWED=NO, so this does not affect local development;
+        # the `release` task supplies the Developer ID identity and team.
+        ENABLE_HARDENED_RUNTIME: YES
+        CODE_SIGN_ENTITLEMENTS: Config/AgentHearth.entitlements
+
+  AgentHearthCoreTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - Tests/AgentHearthCoreTests
+    dependencies:
+      - target: AgentHearthDomain
+      - target: AgentHearthApplication
+      - target: AgentHearthInfrastructure
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.guardix.agenthearth.core-tests
+        GENERATE_INFOPLIST_FILE: YES
+
+schemes:
+  AgentHearth:
+    build:
+      targets:
+        AgentHearth: all
+        AgentHearthCore: all
+        AgentHearthDomain: all
+        AgentHearthApplication: all
+        AgentHearthInfrastructure: all
+        AgentHearthCoreTests: [test]
+    test:
+      targets:
+        - AgentHearthCoreTests

@@ -1,0 +1,21 @@
+.DS_Store
+.build/
+DerivedData/
+build/
+*.xcuserstate
+xcuserdata/
+.swiftpm/
+__pycache__/
+
+# Signing materials and exported archives — never commit these.
+*.p12
+*.cer
+*.mobileprovision
+*.provisionprofile
+*.xcarchive
+
+# Local environment/secret files.
+.env
+.env.*
+*.pem
+*.key
