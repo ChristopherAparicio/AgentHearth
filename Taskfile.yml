@@ -39,18 +39,34 @@ tasks:
     desc: Build a signed Release app and copy it into /Applications
     deps: [bootstrap]
     vars:
-      # Signing with the stable Developer ID identity (not ad-hoc) keeps the
-      # app's identity constant across installs, so macOS permissions like
-      # notifications survive updates instead of resetting each time.
-      # On a Mac without the certificate, run: SIGN=NO task install
-      TEAM: '{{.TEAM | default "8JBCR8G29Z"}}'
-      SIGN: '{{.SIGN | default "YES"}}'
+      # Signing with a stable Developer ID identity (not ad-hoc) keeps the
+      # app's identity constant across installs, so macOS permission grants
+      # (notifications, keychain access) survive updates instead of resetting.
+      # "auto" signs when such a certificate is in the keychain and falls back
+      # to an unsigned build otherwise, so contributors without a certificate
+      # can still `task install`. Force with SIGN=YES / SIGN=NO; TEAM=... to
+      # pick a team when several identities exist.
+      TEAM: '{{.TEAM | default ""}}'
+      SIGN: '{{.SIGN | default "auto"}}'
     cmds:
       # The build directory is resolved from xcodebuild rather than hardcoded,
       # and a running instance is quit first so the copy succeeds.
       - |
-        if [ "{{.SIGN}}" = "YES" ]; then
-          xcodebuild -project {{.PROJECT}} -scheme {{.SCHEME}} -configuration Release             DEVELOPMENT_TEAM="{{.TEAM}}"             CODE_SIGN_STYLE=Manual             CODE_SIGN_IDENTITY="Developer ID Application"             build
+        SIGN="{{.SIGN}}"
+        if [ "$SIGN" = "auto" ]; then
+          if security find-identity -v -p codesigning 2>/dev/null | grep -q "Developer ID Application"; then
+            SIGN=YES
+          else
+            SIGN=NO
+            echo "No Developer ID certificate found - building unsigned (macOS permission grants will not persist across reinstalls)."
+          fi
+        fi
+        if [ "$SIGN" = "YES" ]; then
+          TEAM="{{.TEAM}}"
+          if [ -z "$TEAM" ]; then
+            TEAM=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | sed -E 's/.*\(([A-Z0-9]+)\).*/\1/')
+          fi
+          xcodebuild -project {{.PROJECT}} -scheme {{.SCHEME}} -configuration Release DEVELOPMENT_TEAM="$TEAM" CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="Developer ID Application" build
         else
           xcodebuild -project {{.PROJECT}} -scheme {{.SCHEME}} -configuration Release CODE_SIGNING_ALLOWED=NO build
         fi
