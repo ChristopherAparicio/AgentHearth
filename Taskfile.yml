@@ -36,12 +36,24 @@ tasks:
       - open {{.PROJECT}}
 
   install:
-    desc: Build a Release app and copy it into /Applications (works on any Mac that clones the project)
+    desc: Build a signed Release app and copy it into /Applications
+    deps: [bootstrap]
+    vars:
+      # Signing with the stable Developer ID identity (not ad-hoc) keeps the
+      # app's identity constant across installs, so macOS permissions like
+      # notifications survive updates instead of resetting each time.
+      # On a Mac without the certificate, run: SIGN=NO task install
+      TEAM: '{{.TEAM | default "8JBCR8G29Z"}}'
+      SIGN: '{{.SIGN | default "YES"}}'
     cmds:
       # The build directory is resolved from xcodebuild rather than hardcoded,
       # and a running instance is quit first so the copy succeeds.
-      - task: build
-        vars: { CONFIG: Release }
+      - |
+        if [ "{{.SIGN}}" = "YES" ]; then
+          xcodebuild -project {{.PROJECT}} -scheme {{.SCHEME}} -configuration Release             DEVELOPMENT_TEAM="{{.TEAM}}"             CODE_SIGN_STYLE=Manual             CODE_SIGN_IDENTITY="Developer ID Application"             build
+        else
+          xcodebuild -project {{.PROJECT}} -scheme {{.SCHEME}} -configuration Release CODE_SIGNING_ALLOWED=NO build
+        fi
       - |
         BUILT="$(xcodebuild -project {{.PROJECT}} -scheme {{.SCHEME}} -configuration Release -showBuildSettings 2>/dev/null | awk -F' = ' '/ BUILT_PRODUCTS_DIR /{print $2; exit}')"
         APP="$BUILT/{{.APP_NAME}}"
