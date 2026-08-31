@@ -76,7 +76,8 @@ final class NotificationAdminService {
                 playSound: policy().shouldPlaySound(
                     for: .information,
                     smartSleepMode: smartSleepMode()
-                )
+                ),
+                interactive: true
             )
             if self.lastTestRequestID == requestID,
                self.lastTestResult != .presented {

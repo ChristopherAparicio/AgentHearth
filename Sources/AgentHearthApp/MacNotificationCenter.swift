@@ -158,14 +158,21 @@ final class MacNotificationCenter: NSObject, UNUserNotificationCenterDelegate {
         NSSound(named: NSSound.Name(name))?.play()
     }
 
-    func deliver(_ alert: AgentAlert, playSound: Bool) async -> NotificationDeliveryResult {
+    /// `interactive` marks a delivery the user just asked for (the Settings
+    /// test button): it may activate the app to force the permission prompt.
+    /// Background deliveries ask the system at most once per launch and never
+    /// activate — macOS often ignores that quiet request, which is exactly why
+    /// the interactive path must stay able to insist.
+    func deliver(
+        _ alert: AgentAlert,
+        playSound: Bool,
+        interactive: Bool = false
+    ) async -> NotificationDeliveryResult {
         var status = await permissionStatus()
         if status.authorization == .notDetermined {
-            // Ask once per launch, WITHOUT activating: delivery runs on the
-            // background refresh loop, and activating from here yanked every
-            // app window to the front on each alert until the user answered
-            // the system prompt.
-            if !hasRequestedAuthorizationFromDelivery {
+            if interactive {
+                _ = await requestAuthorization(activating: true)
+            } else if !hasRequestedAuthorizationFromDelivery {
                 hasRequestedAuthorizationFromDelivery = true
                 _ = await requestAuthorization(activating: false)
             }
