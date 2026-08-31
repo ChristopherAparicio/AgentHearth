@@ -61,6 +61,7 @@ enum NotificationDeliveryResult: Equatable {
 
 @MainActor
 final class MacNotificationCenter: NSObject, UNUserNotificationCenterDelegate {
+    private var hasRequestedAuthorizationFromDelivery = false
     private static let cacheExpiryCategory = "cache-expiry"
     private static let sessionPromoteCategory = "session-promote"
     private static let openSessionAction = "open-session"
@@ -108,11 +109,14 @@ final class MacNotificationCenter: NSObject, UNUserNotificationCenterDelegate {
         center.setNotificationCategories([category, promoteCategory])
     }
 
-    func requestAuthorization() async -> Bool {
-        // This is called from the visible Settings window. Explicit activation
-        // matters for LSUIElement menu-bar apps: macOS can otherwise ignore a
-        // permission request made while no app window is active.
-        NSApplication.shared.activate(ignoringOtherApps: true)
+    /// `activating` must be true only for user-initiated requests (the Settings
+    /// button): explicit activation matters for LSUIElement menu-bar apps, as
+    /// macOS can ignore a permission request made while no app window is
+    /// active — but activating from a background path steals the user's focus.
+    func requestAuthorization(activating: Bool = true) async -> Bool {
+        if activating {
+            NSApplication.shared.activate(ignoringOtherApps: true)
+        }
         return (try? await center.requestAuthorization(options: [.alert, .badge, .sound])) ?? false
     }
 
@@ -157,7 +161,14 @@ final class MacNotificationCenter: NSObject, UNUserNotificationCenterDelegate {
     func deliver(_ alert: AgentAlert, playSound: Bool) async -> NotificationDeliveryResult {
         var status = await permissionStatus()
         if status.authorization == .notDetermined {
-            _ = await requestAuthorization()
+            // Ask once per launch, WITHOUT activating: delivery runs on the
+            // background refresh loop, and activating from here yanked every
+            // app window to the front on each alert until the user answered
+            // the system prompt.
+            if !hasRequestedAuthorizationFromDelivery {
+                hasRequestedAuthorizationFromDelivery = true
+                _ = await requestAuthorization(activating: false)
+            }
             status = await permissionStatus()
         }
         guard status.authorization == .allowed || status.authorization == .quiet else {
