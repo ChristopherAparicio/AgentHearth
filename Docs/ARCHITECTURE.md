@@ -43,6 +43,11 @@ AgentHearth invokes snapshots over outbound SSH. It stores no private key or
 password and honors aliases, ProxyJump, and identities from the system SSH
 configuration. The remote receiver is never exposed beyond `127.0.0.1`.
 
+Every remote command is bounded by a 30-second watchdog in addition to the SSH
+connect timeout, and `RemoteAgentClient` backs off exponentially (10 s up to
+3 min) after a failure so an unreachable host is not re-dialed on every poll.
+An explicit **Test Connection** bypasses and, on success, clears the backoff.
+
 Session display IDs are scoped as `host:provider[:source]:session`; provider resume IDs
 remain unchanged in `SessionTarget`. Opening a remote target launches the
 provider resume command inside `ssh -t` and its remote working directory.
@@ -172,6 +177,18 @@ Provider adapters depend on `AgentHearthCore`; the core never imports or referen
 ## Privacy rule
 
 The normalized model must not contain raw prompts, transcript bodies, source-file contents, or secret values. A security alert may contain a rule identifier and source location, but never the detected secret.
+
+Session titles are the one field derived from conversation content (OpenCode
+generates them from the first prompt, Claude Code summarizes the session).
+Every connector routes them through `SessionTitle.normalized`, which collapses
+line breaks and caps them at 120 characters before they reach notifications or
+`history.sqlite`.
+
+The loopback ingress on `127.0.0.1:5274` requires the per-install token in
+`~/.config/agenthearth/ingress-token` (mode 0600) and rejects any request
+carrying an `Origin` header. If the token cannot be provisioned, the receiver
+is not started and Settings reports why; it never falls back to an
+unauthenticated listener.
 
 ## Health event retention
 

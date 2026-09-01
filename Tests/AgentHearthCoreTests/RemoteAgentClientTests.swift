@@ -182,6 +182,117 @@ final class RemoteAgentClientTests: XCTestCase {
         _ = try await client.snapshot(for: .claudeCode, sourceMode: .automatic)
         XCTAssertEqual(runner.commandCount, 3)
     }
+
+    /// An unreachable host must not be re-dialed on every poll: after a failure
+    /// the client backs off exponentially and reports the last error meanwhile.
+    func testBacksOffAfterAFailureAndRecoversOnSuccess() async throws {
+        let clock = MutableClock(Date(timeIntervalSince1970: 10_000))
+        let runner = FailingSSHRunner()
+        let client = RemoteAgentClient(
+            configuration: RemoteHostConfiguration(id: "rtx", displayName: "RTX", sshDestination: "rtx-server"),
+            runner: runner,
+            now: { clock.value }
+        )
+
+        await XCTAssertThrowsErrorAsync(try await client.snapshot(for: .codex, sourceMode: .automatic))
+        XCTAssertEqual(runner.commandCount, 1)
+
+        // Inside the first 10 s window: no ssh spawned, the last error is surfaced.
+        clock.value = clock.value.addingTimeInterval(5)
+        do {
+            _ = try await client.snapshot(for: .claudeCode, sourceMode: .automatic)
+            XCTFail("expected backoff error")
+        } catch let error as RemoteAgentError {
+            guard case let .backingOff(_, lastError) = error else { return XCTFail("unexpected \(error)") }
+            XCTAssertTrue(lastError.contains("connection refused"))
+            XCTAssertTrue(error.localizedDescription.contains("retrying in"))
+        }
+        XCTAssertEqual(runner.commandCount, 1)
+
+        // After the window a real attempt is made; a second failure doubles it.
+        clock.value = clock.value.addingTimeInterval(6)
+        await XCTAssertThrowsErrorAsync(try await client.snapshot(for: .codex, sourceMode: .automatic))
+        XCTAssertEqual(runner.commandCount, 2)
+        clock.value = clock.value.addingTimeInterval(15)
+        await XCTAssertThrowsErrorAsync(try await client.snapshot(for: .codex, sourceMode: .automatic))
+        XCTAssertEqual(runner.commandCount, 2, "still inside the doubled 20 s window")
+
+        // An explicit health check bypasses the backoff and, on success, lifts it.
+        runner.shouldFail = false
+        _ = try await client.health()
+        XCTAssertEqual(runner.commandCount, 3)
+        _ = try await client.snapshot(for: .codex, sourceMode: .automatic)
+        XCTAssertEqual(runner.commandCount, 4)
+    }
+
+    /// The three provider connectors of one host fail together on an outage;
+    /// that single outage must count as one failure, not escalate three times.
+    func testConcurrentFailuresCountAsOneBackoffStep() async {
+        let clock = MutableClock(Date(timeIntervalSince1970: 10_000))
+        let runner = FailingSSHRunner()
+        let client = RemoteAgentClient(
+            configuration: RemoteHostConfiguration(id: "rtx", displayName: "RTX", sshDestination: "rtx-server"),
+            runner: runner,
+            now: { clock.value }
+        )
+
+        async let first: Void = XCTAssertThrowsErrorAsync(try await client.snapshot(for: .codex, sourceMode: .automatic))
+        async let second: Void = XCTAssertThrowsErrorAsync(try await client.snapshot(for: .claudeCode, sourceMode: .automatic))
+        async let third: Void = XCTAssertThrowsErrorAsync(try await client.snapshot(for: .openCode, sourceMode: .automatic))
+        _ = await (first, second, third)
+        XCTAssertEqual(runner.commandCount, 3)
+
+        // One step (10 s), not three (40 s): 15 s later the host is dialed again.
+        clock.value = clock.value.addingTimeInterval(15)
+        await XCTAssertThrowsErrorAsync(try await client.snapshot(for: .codex, sourceMode: .automatic))
+        XCTAssertEqual(runner.commandCount, 4)
+    }
+
+    func testBackoffIsCappedAtTheMaximum() async {
+        let clock = MutableClock(Date(timeIntervalSince1970: 10_000))
+        let runner = FailingSSHRunner()
+        let client = RemoteAgentClient(
+            configuration: RemoteHostConfiguration(id: "rtx", displayName: "RTX", sshDestination: "rtx-server"),
+            runner: runner,
+            now: { clock.value }
+        )
+        for _ in 0..<12 {
+            await XCTAssertThrowsErrorAsync(try await client.snapshot(for: .codex, sourceMode: .automatic))
+            clock.value = clock.value.addingTimeInterval(RemoteAgentClient.maximumBackoff + 1)
+        }
+        XCTAssertEqual(runner.commandCount, 12, "the cap keeps every attempt at most maximumBackoff apart")
+    }
+}
+
+private func XCTAssertThrowsErrorAsync<T>(
+    _ expression: @autoclosure () async throws -> T,
+    file: StaticString = #filePath,
+    line: UInt = #line
+) async {
+    do {
+        _ = try await expression()
+        XCTFail("expected an error", file: file, line: line)
+    } catch {}
+}
+
+private final class FailingSSHRunner: SSHCommandRunning, @unchecked Sendable {
+    private(set) var commandCount = 0
+    var shouldFail = true
+
+    func run(
+        destination: String,
+        remoteCommand: String,
+        standardInput: Data?
+    ) async throws -> SSHCommandResult {
+        commandCount += 1
+        if shouldFail {
+            throw SSHCommandError.commandFailed(destination: destination, message: "ssh: connection refused")
+        }
+        let payload = remoteCommand.contains(" health")
+            ? #"{"schema_version":1,"service":"AgentHearth Remote","status":"ok","version":"0.2.0"}"#
+            : #"{"schema_version":1,"provider":"codex","available":true,"message":null,"sessions":[],"usage_windows":[],"updated_at":2000000}"#
+        return SSHCommandResult(standardOutput: Data(payload.utf8), standardError: "", exitCode: 0)
+    }
 }
 
 private final class MutableClock: @unchecked Sendable {

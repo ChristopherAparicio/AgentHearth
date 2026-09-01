@@ -96,8 +96,11 @@ final class OpenCodeServersService {
             do {
                 await connector.setSourceMode(.automatic)
                 let snapshot = try await connector.snapshot()
+                // The server may have been removed while the check ran.
+                guard openCodeServers.contains(where: { $0.id == server.id }) else { return }
                 openCodeServerStates[server.id] = .ready(sessionCount: snapshot.sessions.count)
             } catch {
+                guard openCodeServers.contains(where: { $0.id == server.id }) else { return }
                 openCodeServerStates[server.id] = .failed(message: error.localizedDescription)
             }
         }
@@ -108,7 +111,9 @@ final class OpenCodeServersService {
     /// without triggering a topology rebuild of its own, so the removal
     /// rebuilds the connector graph exactly once.
     func removeServers(forHost hostID: String) {
+        let removed = openCodeServers.filter { $0.hostID == hostID }.map(\.id)
         openCodeServers.removeAll { $0.hostID == hostID }
+        for serverID in removed { openCodeServerStates.removeValue(forKey: serverID) }
     }
 
     private func hostDisplayName(for hostID: String) -> String? {

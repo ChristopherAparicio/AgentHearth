@@ -16,10 +16,14 @@ public actor RemoteAgentInstaller {
         self.runner = runner
     }
 
+    /// - Parameter client: the host's shared `RemoteAgentClient` when the caller
+    ///   has one; the final health check then also clears that client's
+    ///   failure backoff. A throwaway client is used otherwise.
     public func install(
         on configuration: RemoteHostConfiguration,
         scriptURL: URL,
-        openCodePluginURL: URL? = nil
+        openCodePluginURL: URL? = nil,
+        client: RemoteAgentClient? = nil
     ) async throws -> String {
         let script = try Data(contentsOf: scriptURL)
         let installCommand = "umask 077; mkdir -p \"$HOME/.local/share/agenthearth\" && cat > \"$HOME/.local/share/agenthearth/agenthearth_remote.py\" && chmod 700 \"$HOME/.local/share/agenthearth/agenthearth_remote.py\" && python3 \"$HOME/.local/share/agenthearth/agenthearth_remote.py\" install-service"
@@ -37,12 +41,15 @@ public actor RemoteAgentInstaller {
                 standardInput: plugin
             )
         }
-        let client = RemoteAgentClient(configuration: configuration, runner: runner)
+        let client = client ?? RemoteAgentClient(configuration: configuration, runner: runner)
         return try await client.health()
     }
 
-    public func check(_ configuration: RemoteHostConfiguration) async throws -> String {
-        let client = RemoteAgentClient(configuration: configuration, runner: runner)
+    public func check(
+        _ configuration: RemoteHostConfiguration,
+        client: RemoteAgentClient? = nil
+    ) async throws -> String {
+        let client = client ?? RemoteAgentClient(configuration: configuration, runner: runner)
         return try await client.health()
     }
 

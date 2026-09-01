@@ -36,6 +36,12 @@ final class RemoteHostsService {
     /// Supplies the current per-provider data-source modes for previews.
     @ObservationIgnored var dataSourceModes: () -> [AgentProviderID: ProviderDataSourceMode] = { [:] }
 
+    /// One token per host identifies the latest install/check/uninstall
+    /// started for it. Completions compare against it so a slow earlier
+    /// operation cannot overwrite the result of a later one, and a completion
+    /// for a host that was removed meanwhile is dropped.
+    @ObservationIgnored private var operationTokens: [String: UUID] = [:]
+
     var remoteHosts: [RemoteHostConfiguration] {
         didSet {
             guard remoteHosts != oldValue else { return }
@@ -91,6 +97,8 @@ final class RemoteHostsService {
         remoteHosts.removeAll { $0.id == hostID }
         remoteHostStates.removeValue(forKey: hostID)
         remoteHostPreviews.removeValue(forKey: hostID)
+        operationTokens.removeValue(forKey: hostID)
+        connectorGraph.forgetRemoteAgentClient(forHost: hostID)
         onHostRemoved(hostID)
         onTopologyChanged()
     }
@@ -100,31 +108,42 @@ final class RemoteHostsService {
             remoteHostStates[configuration.id] = .failed(message: "The bundled remote agent is missing.")
             return
         }
-        remoteHostStates[configuration.id] = .checking
+        let token = beginOperation(for: configuration)
         Task {
             do {
                 let message = try await installer.install(
                     on: configuration,
                     scriptURL: bundledRemoteAgentURL,
-                    openCodePluginURL: bundledOpenCodePluginURL
+                    openCodePluginURL: bundledOpenCodePluginURL,
+                    client: connectorGraph.remoteAgentClient(for: configuration)
                 )
+                guard isCurrent(token, for: configuration) else { return }
                 remoteHostStates[configuration.id] = .ready(message: message)
-                await loadRemotePreview(configuration)
+                await loadRemotePreview(configuration, token: token)
+                guard isCurrent(token, for: configuration) else { return }
                 onTopologyChanged()
             } catch {
+                guard isCurrent(token, for: configuration) else { return }
                 remoteHostStates[configuration.id] = .failed(message: error.localizedDescription)
             }
         }
     }
 
     func checkRemoteHost(_ configuration: RemoteHostConfiguration) {
-        remoteHostStates[configuration.id] = .checking
+        let token = beginOperation(for: configuration)
         Task {
             do {
-                let message = try await installer.check(configuration)
+                // Through the shared client so a green check also lifts the
+                // backoff the polling connectors are honoring for this host.
+                let message = try await installer.check(
+                    configuration,
+                    client: connectorGraph.remoteAgentClient(for: configuration)
+                )
+                guard isCurrent(token, for: configuration) else { return }
                 remoteHostStates[configuration.id] = .ready(message: message)
-                await loadRemotePreview(configuration)
+                await loadRemotePreview(configuration, token: token)
             } catch {
+                guard isCurrent(token, for: configuration) else { return }
                 remoteHostStates[configuration.id] = .failed(message: error.localizedDescription)
                 remoteHostPreviews.removeValue(forKey: configuration.id)
             }
@@ -132,23 +151,40 @@ final class RemoteHostsService {
     }
 
     func uninstallRemoteAgent(_ configuration: RemoteHostConfiguration) {
-        remoteHostStates[configuration.id] = .checking
+        let token = beginOperation(for: configuration)
         Task {
             do {
                 try await installer.uninstall(from: configuration)
+                guard isCurrent(token, for: configuration) else { return }
                 remoteHostStates[configuration.id] = .unknown
                 remoteHostPreviews.removeValue(forKey: configuration.id)
             } catch {
+                guard isCurrent(token, for: configuration) else { return }
                 remoteHostStates[configuration.id] = .failed(message: error.localizedDescription)
             }
         }
     }
 
-    private func loadRemotePreview(_ configuration: RemoteHostConfiguration) async {
+    private func beginOperation(for configuration: RemoteHostConfiguration) -> UUID {
+        let token = UUID()
+        operationTokens[configuration.id] = token
+        remoteHostStates[configuration.id] = .checking
+        return token
+    }
+
+    /// True while `token` is still the latest operation for a host that is
+    /// still configured.
+    private func isCurrent(_ token: UUID, for configuration: RemoteHostConfiguration) -> Bool {
+        operationTokens[configuration.id] == token
+            && remoteHosts.contains { $0.id == configuration.id }
+    }
+
+    private func loadRemotePreview(_ configuration: RemoteHostConfiguration, token: UUID) async {
         let snapshots = await connectorGraph.remotePreviewSnapshots(
             for: configuration,
             modes: dataSourceModes()
         )
+        guard isCurrent(token, for: configuration) else { return }
         remoteHostPreviews[configuration.id] = RemoteHostPreview(
             snapshots: snapshots,
             refreshedAt: .now

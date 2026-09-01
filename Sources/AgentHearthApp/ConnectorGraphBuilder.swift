@@ -3,10 +3,44 @@ import Foundation
 
 /// Composes the provider-connector graph for the configured remote hosts and
 /// OpenCode servers, so `AppModel` never names Infrastructure concretions.
+/// Main-actor bound like every service that holds it.
+@MainActor
 struct ConnectorGraphBuilder {
     /// The zero-configuration local OpenCode connector, used unless an
     /// explicit local server replaces it.
     let automaticOpenCodeConnector: OpenCodeConnector
+
+    /// One `RemoteAgentClient` per host, shared by the polling connectors, the
+    /// Settings previews, and the install/check actions. Sharing matters
+    /// because the client owns the host's failure backoff: a successful
+    /// **Test Connection** must clear the same backoff the poller is honoring.
+    /// Reference type so every copy of this struct sees the same cache; only
+    /// touched from `@MainActor` callers.
+    private final class RemoteAgentClientCache {
+        var clients: [String: (destination: String, client: RemoteAgentClient)] = [:]
+    }
+
+    private let clientCache = RemoteAgentClientCache()
+
+    init(automaticOpenCodeConnector: OpenCodeConnector) {
+        self.automaticOpenCodeConnector = automaticOpenCodeConnector
+    }
+
+    /// Returns the host's shared client, replacing it when the SSH destination
+    /// changed since it was created.
+    func remoteAgentClient(for configuration: RemoteHostConfiguration) -> RemoteAgentClient {
+        if let cached = clientCache.clients[configuration.id],
+           cached.destination == configuration.sshDestination {
+            return cached.client
+        }
+        let client = RemoteAgentClient(configuration: configuration)
+        clientCache.clients[configuration.id] = (configuration.sshDestination, client)
+        return client
+    }
+
+    func forgetRemoteAgentClient(forHost hostID: String) {
+        clientCache.clients.removeValue(forKey: hostID)
+    }
 
     func additionalConnectors(
         remoteHosts: [RemoteHostConfiguration],
@@ -19,7 +53,7 @@ struct ConnectorGraphBuilder {
         }
 
         for configuration in remoteHosts.filter(\.isEnabled) {
-            let client = RemoteAgentClient(configuration: configuration)
+            let client = remoteAgentClient(for: configuration)
             connectors.append(RemoteProviderConnector(providerID: .codex, client: client))
             connectors.append(RemoteProviderConnector(providerID: .claudeCode, client: client))
             let servers = enabledServers.filter { $0.hostID == configuration.id }
@@ -51,7 +85,7 @@ struct ConnectorGraphBuilder {
         }
         return RemoteOpenCodeServerConnector(
             server: server,
-            client: RemoteAgentClient(configuration: configuration)
+            client: remoteAgentClient(for: configuration)
         )
     }
 
@@ -62,7 +96,7 @@ struct ConnectorGraphBuilder {
         for configuration: RemoteHostConfiguration,
         modes: [AgentProviderID: ProviderDataSourceMode]
     ) async -> [ProviderSnapshot] {
-        let client = RemoteAgentClient(configuration: configuration)
+        let client = remoteAgentClient(for: configuration)
         return await withTaskGroup(
             of: ProviderSnapshot.self,
             returning: [ProviderSnapshot].self

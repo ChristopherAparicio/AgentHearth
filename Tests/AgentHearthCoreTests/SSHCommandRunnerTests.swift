@@ -37,6 +37,32 @@ final class SSHCommandRunnerTests: XCTestCase {
         XCTAssertEqual(result.standardError, "oops")
     }
 
+    /// A host that accepts the connection and then stalls must not pin the
+    /// refresh loop: the watchdog terminates the child and flags the result.
+    func testTerminatesACommandThatExceedsTheTimeout() async throws {
+        let started = Date.now
+        let result = try await SystemSSHCommandRunner.execute(
+            executableURL: URL(fileURLWithPath: "/bin/sleep"),
+            arguments: ["30"],
+            standardInput: nil,
+            timeout: 0.5
+        )
+        XCTAssertTrue(result.timedOut)
+        XCTAssertNotEqual(result.exitCode, 0)
+        XCTAssertLessThan(Date.now.timeIntervalSince(started), 10)
+    }
+
+    func testFastCommandIsNotFlaggedAsTimedOut() async throws {
+        let result = try await SystemSSHCommandRunner.execute(
+            executableURL: URL(fileURLWithPath: "/bin/echo"),
+            arguments: ["ok"],
+            standardInput: nil,
+            timeout: 5
+        )
+        XCTAssertFalse(result.timedOut)
+        XCTAssertEqual(result.exitCode, 0)
+    }
+
     func testRejectsInvalidDestination() async {
         let runner = SystemSSHCommandRunner()
         do {
@@ -56,6 +82,7 @@ extension SSHCommandError: Equatable {
         case (.invalidDestination, .invalidDestination): true
         case let (.launchFailed(a), .launchFailed(b)): a == b
         case let (.commandFailed(a1, a2), .commandFailed(b1, b2)): a1 == b1 && a2 == b2
+        case let (.timedOut(a1, a2), .timedOut(b1, b2)): a1 == b1 && a2 == b2
         default: false
         }
     }

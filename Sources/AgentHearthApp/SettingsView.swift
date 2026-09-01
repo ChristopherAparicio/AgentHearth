@@ -197,7 +197,8 @@ struct SettingsView: View {
             model.connectorInstallation.refreshOpenCodeInstallationState()
             model.connectorInstallation.refreshCodexInstallationState()
             model.connectorInstallation.refreshClaudeCodeInstallationState()
-            for host in model.remoteHostsService.remoteHosts {
+            // A host the user disabled must not be contacted behind their back.
+            for host in model.remoteHostsService.remoteHosts where host.isEnabled {
                 model.remoteHostsService.checkRemoteHost(host)
             }
             for server in model.openCodeServersService.openCodeServers where server.isEnabled {

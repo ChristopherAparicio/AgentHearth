@@ -5,13 +5,19 @@ import Foundation
 public enum RemoteAgentError: LocalizedError {
     case unsupportedSchema(Int)
     case invalidResponse(String)
+    /// The host failed recently and polling is paused until `retryAt`; the
+    /// wrapped message is the last real error so the UI keeps showing its cause.
+    case backingOff(retryAt: Date, lastError: String)
 
     public var errorDescription: String? {
         switch self {
         case let .unsupportedSchema(version):
-            "Unsupported remote AgentHearth schema: \(version)"
+            return "Unsupported remote AgentHearth schema: \(version)"
         case let .invalidResponse(message):
-            "Invalid response from the remote AgentHearth agent: \(message)"
+            return "Invalid response from the remote AgentHearth agent: \(message)"
+        case let .backingOff(retryAt, lastError):
+            let seconds = max(1, Int(retryAt.timeIntervalSinceNow.rounded(.up)))
+            return "\(lastError) — retrying in \(seconds)s"
         }
     }
 }
@@ -23,6 +29,13 @@ public actor RemoteAgentClient {
     /// Freshness window for a cached snapshot; each provider (and each
     /// OpenCode server) is judged only against its own fetch time.
     private static let snapshotFreshness: TimeInterval = 3
+
+    /// Exponential backoff for an unreachable host: 10 s after the first
+    /// failure, doubling up to three minutes. Without it every poll (as often
+    /// as every 5 s while a local agent works) spawned three `ssh` processes
+    /// per host that each hung for the connect timeout.
+    static let initialBackoff: TimeInterval = 10
+    static let maximumBackoff: TimeInterval = 180
 
     private struct CachedSnapshot {
         let snapshot: ProviderSnapshot
@@ -36,6 +49,10 @@ public actor RemoteAgentClient {
     private var openCodeServerSnapshots: [String: CachedSnapshot] = [:]
     private var historyCursors: [AgentProviderID: Int64] = [:]
     private var historyFetchedAt: [AgentProviderID: Date] = [:]
+    private var consecutiveFailures = 0
+    private var suspendedUntil: Date?
+    private var lastFailureAt: Date?
+    private var lastFailureMessage = ""
 
     public init(
         configuration: RemoteHostConfiguration,
@@ -48,13 +65,56 @@ public actor RemoteAgentClient {
     }
 
     public func health() async throws -> String {
-        let result = try await runner.run(
-            destination: configuration.sshDestination,
-            remoteCommand: "python3 \(Self.installedPath) health",
-            standardInput: nil
+        // An explicit health check is a user action: it always reaches the
+        // host and, when it succeeds, lifts any pending backoff.
+        let result = try await runRemote(
+            "python3 \(Self.installedPath) health",
+            standardInput: nil,
+            bypassingBackoff: true
         )
         let health = try decodeEnvelope(RemoteAgentHealth.self, from: result.standardOutput)
         return "\(health.service) \(health.version) · \(health.status)"
+    }
+
+    /// Runs one command on the host, honoring and updating the backoff state.
+    private func runRemote(
+        _ remoteCommand: String,
+        standardInput: Data?,
+        bypassingBackoff: Bool = false
+    ) async throws -> SSHCommandResult {
+        let startedAt = now()
+        if !bypassingBackoff, let suspendedUntil, startedAt < suspendedUntil {
+            throw RemoteAgentError.backingOff(retryAt: suspendedUntil, lastError: lastFailureMessage)
+        }
+        do {
+            let result = try await runner.run(
+                destination: configuration.sshDestination,
+                remoteCommand: remoteCommand,
+                standardInput: standardInput
+            )
+            consecutiveFailures = 0
+            suspendedUntil = nil
+            lastFailureAt = nil
+            return result
+        } catch {
+            // The three provider connectors of one host poll concurrently and
+            // the actor is reentrant across the SSH call, so one outage yields
+            // several failures at once. Only an attempt that began after the
+            // previous failure escalates the backoff; its siblings just refresh
+            // the deadline.
+            if let lastFailureAt, startedAt <= lastFailureAt {
+                // concurrent sibling of an already-counted failure
+            } else {
+                consecutiveFailures += 1
+            }
+            let exponent = Double(min(max(consecutiveFailures, 1) - 1, 10))
+            let delay = min(Self.maximumBackoff, Self.initialBackoff * pow(2, exponent))
+            let failedAt = now()
+            lastFailureAt = failedAt
+            suspendedUntil = failedAt.addingTimeInterval(delay)
+            lastFailureMessage = error.localizedDescription
+            throw error
+        }
     }
 
     public func snapshot(
@@ -66,9 +126,8 @@ public actor RemoteAgentClient {
             return cached.snapshot
         }
 
-        let result = try await runner.run(
-            destination: configuration.sshDestination,
-            remoteCommand: "python3 \(Self.installedPath) snapshot --provider \(providerID.remoteAgentArgument) --source \(sourceMode.rawValue)",
+        let result = try await runRemote(
+            "python3 \(Self.installedPath) snapshot --provider \(providerID.remoteAgentArgument) --source \(sourceMode.rawValue)",
             standardInput: nil
         )
         let envelope = try decodeEnvelope(RemoteAgentEnvelope.self, from: result.standardOutput)
@@ -88,9 +147,8 @@ public actor RemoteAgentClient {
         guard (1...65_535).contains(server.port) else {
             throw OpenCodeServerError.invalidPort(server.port)
         }
-        let result = try await runner.run(
-            destination: configuration.sshDestination,
-            remoteCommand: "python3 \(Self.installedPath) snapshot --provider opencode --source realtimeOnly --opencode-port \(server.port)",
+        let result = try await runRemote(
+            "python3 \(Self.installedPath) snapshot --provider opencode --source realtimeOnly --opencode-port \(server.port)",
             standardInput: nil
         )
         let envelope = try decodeEnvelope(RemoteAgentEnvelope.self, from: result.standardOutput)
@@ -106,9 +164,8 @@ public actor RemoteAgentClient {
         }
         historyFetchedAt[providerID] = fetchedAt
         let cursor = historyCursors[providerID] ?? 0
-        let result = try await runner.run(
-            destination: configuration.sshDestination,
-            remoteCommand: "python3 \(Self.installedPath) history --provider \(providerID.remoteAgentArgument) --after-id \(cursor) --limit 2000",
+        let result = try await runRemote(
+            "python3 \(Self.installedPath) history --provider \(providerID.remoteAgentArgument) --after-id \(cursor) --limit 2000",
             standardInput: nil
         )
         let envelope = try decodeEnvelope(RemoteAgentHistoryEnvelope.self, from: result.standardOutput)
@@ -154,7 +211,7 @@ public actor RemoteAgentClient {
                     .compactMap { $0 }
                     .joined(separator: ":"),
                 providerID: envelope.provider,
-                title: session.title,
+                title: SessionTitle.normalized(session.title, fallback: session.id),
                 projectName: session.projectName,
                 model: session.model,
                 status: session.status,
