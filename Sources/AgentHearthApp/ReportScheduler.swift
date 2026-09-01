@@ -95,9 +95,12 @@ final class ReportScheduler {
             endsAt: today.start,
             cacheHitThreshold: Double(context.cacheHitThreshold) / 100
         )
+        // Mark the day handled even when there is nothing to recap: yesterday's
+        // history will not change, so re-running the aggregation on every
+        // refresh for the rest of the window would be pure waste.
+        preferences.lastMorningRecapDay = yesterdayStart
         guard summary.turnCount > 0 else { return }
         await deliverMorningRecap(summary)
-        preferences.lastMorningRecapDay = yesterdayStart
     }
 
     private func hasFreshMorningActivity(

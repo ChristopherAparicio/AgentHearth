@@ -41,6 +41,10 @@ final class AppModel {
     let monitor: ProviderMonitor
     let historyStore: HistoryStore
     private let connectorServer: AgentHearthLocalServer
+    /// Set by the composition root when the ingress token could not be
+    /// provisioned. The server is then never started: running it without
+    /// authentication would silently let any local process spoof sessions.
+    private let connectorServerStartupError: String?
     private let alertDetector: SnapshotAlertDetector
     private let notificationCenter: MacNotificationCenter
     let sessionOpener: any SessionOpening
@@ -78,6 +82,10 @@ final class AppModel {
     }
     var lastRefreshAt: Date?
     var isRefreshing = false
+    private var refreshRequested = false
+    /// Number of views currently displaying `historyDashboard`; the refresh
+    /// loop skips the aggregation query while it is zero.
+    var historyDashboardObservers = 0
     var notificationPolicy: NotificationPolicy {
         didSet {
             guard notificationPolicy != oldValue else { return }
@@ -213,6 +221,9 @@ final class AppModel {
         }
     }
     var historyDashboard = HistoryDashboardSnapshot.empty
+    /// On-disk size of the history database, refreshed on every poll. Cheap
+    /// (three `stat` calls), unlike the dashboard aggregation.
+    var historyStorageBytes: Int64 = 0
 
     init(
         monitor: ProviderMonitor,
@@ -220,6 +231,7 @@ final class AppModel {
         historyStore: HistoryStore,
         smartSleep smartSleepCoordinator: SmartSleepCoordinator,
         connectorServer: AgentHearthLocalServer,
+        connectorServerStartupError: String? = nil,
         openCodeInstaller: OpenCodeConnectorInstaller,
         codexInstaller: CodexConnectorInstaller,
         claudeCodeInstaller: ClaudeCodeConnectorInstaller,
@@ -237,6 +249,7 @@ final class AppModel {
         self.monitor = monitor
         self.historyStore = historyStore
         self.connectorServer = connectorServer
+        self.connectorServerStartupError = connectorServerStartupError
         self.alertDetector = alertDetector
         self.notificationCenter = notificationCenter
         self.sessionOpener = sessionOpener
@@ -332,8 +345,11 @@ final class AppModel {
         openCodeServersService.remoteHosts = { [weak self] in
             self?.remoteHostsService.remoteHosts ?? []
         }
+        // Smart Sleep is global: it must see every observed session, hidden
+        // providers included, so a visual filter can never release the sleep
+        // assertion while an agent is still working.
         smartSleep.sessions = { [weak self] in
-            self?.sessions ?? []
+            self?.snapshots.flatMap(\.sessions) ?? []
         }
         alertRules.allSessions = { [weak self] in
             self?.snapshots.flatMap(\.sessions) ?? []
@@ -356,7 +372,21 @@ final class AppModel {
         let openCodeConnector = OpenCodeConnector()
         let codexConnector = CodexConnector()
         let claudeCodeConnector = ClaudeCodeConnector()
-        let ingressToken = try? AgentHearthIngressToken.loadOrCreate()
+        // Without the shared secret the loopback ingress would accept forged
+        // provider events from any local process, so a provisioning failure
+        // keeps the receiver off and is reported in Settings instead of
+        // silently degrading to an unauthenticated server.
+        let ingressToken: String?
+        let ingressTokenError: String?
+        do {
+            ingressToken = try AgentHearthIngressToken.loadOrCreate()
+            ingressTokenError = nil
+        } catch {
+            ingressToken = nil
+            ingressTokenError = "Local receiver disabled: the ingress token could not be created at "
+                + "~/.config/agenthearth/ingress-token (\(error.localizedDescription)). "
+                + "Live hooks and plugins are ignored until this is fixed."
+        }
         let server = AgentHearthLocalServer(
             token: ingressToken,
             ingestOpenCode: { payload in
@@ -399,6 +429,7 @@ final class AppModel {
             historyStore: HistoryStore(),
             smartSleep: SmartSleepCoordinator(assertion: ProcessInfoSleepAssertion()),
             connectorServer: server,
+            connectorServerStartupError: ingressTokenError,
             openCodeInstaller: OpenCodeConnectorInstaller(),
             codexInstaller: CodexConnectorInstaller(),
             claudeCodeInstaller: ClaudeCodeConnectorInstaller(),
@@ -437,11 +468,15 @@ final class AppModel {
         // permission prompt, otherwise the request may not be registered.
         notificationAdmin.refreshAuthorization()
 
-        do {
-            try connectorServer.start()
-            connectorServerError = nil
-        } catch {
-            connectorServerError = error.localizedDescription
+        if let connectorServerStartupError {
+            connectorServerError = connectorServerStartupError
+        } else {
+            do {
+                try connectorServer.start()
+                connectorServerError = nil
+            } catch {
+                connectorServerError = error.localizedDescription
+            }
         }
 
         let monitor = monitor
@@ -462,8 +497,21 @@ final class AppModel {
     }
 
     func refresh() async {
-        guard !isRefreshing else { return }
+        // A refresh requested while one is running (a source-mode change, a
+        // topology rebuild, the Refresh button) must not be lost: remember it
+        // and run one more pass once the current one completes.
+        guard !isRefreshing else {
+            refreshRequested = true
+            return
+        }
         isRefreshing = true
+        defer {
+            isRefreshing = false
+            if refreshRequested {
+                refreshRequested = false
+                Task { await refresh() }
+            }
+        }
         await accountUsagePoller.refreshIfNeeded()
         let collectedSnapshots = await monitor.collect()
         let alerts = await alertDetector.detect(
@@ -477,11 +525,17 @@ final class AppModel {
             // events were discarded) — and its large output could deadlock the
             // SSH runner. It is intentionally no longer issued.
             await historyStore.ingest(collectedSnapshots, retentionDays: historyRetention.rawValue)
-            historyDashboard = await historyStore.dashboard(
-                days: historyRangeDays,
-                providerID: historyProviderFilter,
-                cacheHitThreshold: Double(cacheHitThreshold) / 100
-            )
+            // The dashboard aggregation spans up to 90 days; only recompute it
+            // while a view is actually showing it (the Insights window and the
+            // History settings refresh themselves on appearance).
+            if historyDashboardObservers > 0 {
+                historyDashboard = await historyStore.dashboard(
+                    days: historyRangeDays,
+                    providerID: historyProviderFilter,
+                    cacheHitThreshold: Double(cacheHitThreshold) / 100
+                )
+            }
+            historyStorageBytes = await historyStore.storageBytes()
         }
         snapshots = collectedSnapshots
         // Reconcile against every observed session (hidden providers included)
@@ -490,8 +544,7 @@ final class AppModel {
         alertRules.preferences.pruneCacheAlertStates(using: snapshots.flatMap(\.sessions))
         lastRefreshAt = .now
         normalizeSelection()
-        smartSleep.reconcileAfterRefresh(sessions: sessions)
-        isRefreshing = false
+        smartSleep.reconcileAfterRefresh(sessions: snapshots.flatMap(\.sessions))
 
         for alert in alerts {
             let shouldPlaySound = notificationPolicy.shouldPlaySound(

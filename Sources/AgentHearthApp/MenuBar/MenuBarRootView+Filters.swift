@@ -5,7 +5,7 @@ extension MenuBarRootView {
     @ViewBuilder
     var providerPicker: some View {
         if model.hostScopedSnapshots.count <= 3 {
-            Picker("Provider", selection: $model.selection) {
+            Picker("Provider", selection: selectionBinding) {
                 Text("Dashboard").tag(ProviderSelection.all)
                 ForEach(model.hostScopedSnapshots) { snapshot in
                     Text(snapshot.id.displayName)
@@ -20,10 +20,17 @@ extension MenuBarRootView {
         }
     }
 
+    private var selectionBinding: Binding<ProviderSelection> {
+        Binding(
+            get: { model.selection },
+            set: { model.setSelection($0) }
+        )
+    }
+
     private var providerMenu: some View {
         Menu {
             Button {
-                model.selection = .all
+                model.setSelection(.all)
             } label: {
                 Label(
                     "Dashboard (\(model.hostScopedSnapshots.count) providers)",
@@ -35,7 +42,7 @@ extension MenuBarRootView {
 
             ForEach(model.hostScopedSnapshots) { snapshot in
                 Button {
-                    model.selection = .provider(snapshot.id)
+                    model.setSelection(.provider(snapshot.id))
                 } label: {
                     Label(
                         snapshot.id.displayName,

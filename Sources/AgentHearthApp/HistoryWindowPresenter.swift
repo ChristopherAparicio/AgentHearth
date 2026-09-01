@@ -6,6 +6,11 @@ final class HistoryWindowPresenter: NSObject, NSWindowDelegate {
     static let shared = HistoryWindowPresenter()
 
     private var window: NSWindow?
+    /// The model registered as a dashboard observer while the window is open.
+    /// Registration is tied to the window's lifecycle rather than SwiftUI's
+    /// `onDisappear`, which is not delivered reliably when a retained window
+    /// is merely ordered out.
+    private weak var observingModel: AppModel?
 
     func show(model: AppModel) {
         let sourceWindow = NSApplication.shared.keyWindow
@@ -13,10 +18,20 @@ final class HistoryWindowPresenter: NSObject, NSWindowDelegate {
             sourceWindow?.orderOut(nil)
         }
 
-        Task { await model.refreshHistoryDashboard() }
+        if observingModel == nil {
+            observingModel = model
+            model.beginObservingHistoryDashboard()
+        } else {
+            Task { await model.refreshHistoryDashboard() }
+        }
         DispatchQueue.main.async { [weak self] in
             self?.present(model: model)
         }
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        observingModel?.endObservingHistoryDashboard()
+        observingModel = nil
     }
 
     private func present(model: AppModel) {

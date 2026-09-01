@@ -139,7 +139,7 @@ extension MenuBarRootView {
             cacheReuseDisplayMode: model.cacheReuseDisplayMode,
             compact: model.showsCompactSessionRows,
             content: content,
-            onSelectProvider: { model.selection = .provider($0) }
+            onSelectProvider: { model.setSelection(.provider($0)) }
         )
     }
 

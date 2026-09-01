@@ -30,7 +30,6 @@ struct HistoryDashboardView: View {
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .frame(minWidth: 720, minHeight: 580)
-        .task { await model.refreshHistoryDashboard() }
     }
 
     private var header: some View {

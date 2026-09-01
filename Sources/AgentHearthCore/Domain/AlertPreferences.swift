@@ -72,7 +72,7 @@ public struct AlertPreferences: Codable, Equatable, Sendable {
         self.cacheWarningSeconds = max(0, try container.decodeIfPresent(Int.self, forKey: .cacheWarningSeconds) ?? 60)
         self.usageWarningFraction = min(max(try container.decodeIfPresent(Double.self, forKey: .usageWarningFraction) ?? 0.80, 0), 1)
         self.usageAlertThresholds = try container.decodeIfPresent([UsageAlertThreshold].self, forKey: .usageAlertThresholds) ?? [
-            UsageAlertThreshold(id: "usage-legacy", percentage: Int(self.usageWarningFraction * 100), soundName: "Funk")
+            UsageAlertThreshold(id: "usage-legacy", percentage: Int((self.usageWarningFraction * 100).rounded()), soundName: "Funk")
         ]
         self.cacheNotificationProfiles = try container.decodeIfPresent([CacheNotificationProfilePreference].self, forKey: .cacheNotificationProfiles) ?? []
         self.cacheNotificationRules = try container.decodeIfPresent([CacheNotificationRule].self, forKey: .cacheNotificationRules) ?? []

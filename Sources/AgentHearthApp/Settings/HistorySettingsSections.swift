@@ -81,12 +81,12 @@ struct HistoryReportsSettingsSection: View {
                 Button("Clear History", role: .destructive) {
                     isConfirmingHistoryClear = true
                 }
-                .disabled(model.historyDashboard.storageBytes == 0)
+                .disabled(model.historyStorageBytes == 0)
 
                 Spacer()
 
                 Text(ByteCountFormatter.string(
-                    fromByteCount: model.historyDashboard.storageBytes,
+                    fromByteCount: model.historyStorageBytes,
                     countStyle: .file
                 ))
                 .font(.caption.monospacedDigit())

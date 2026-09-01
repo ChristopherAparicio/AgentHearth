@@ -55,6 +55,7 @@ extension AppModel {
             providerID: historyProviderFilter,
             cacheHitThreshold: Double(cacheHitThreshold) / 100
         )
+        historyStorageBytes = await historyStore.storageBytes()
     }
 
     func clearHistory() {
@@ -75,6 +76,25 @@ extension AppModel {
     func setHostSelection(_ selection: HostSelection) {
         hostSelection = selection
         normalizeSelection()
+    }
+
+    /// Every provider-selection write goes through here so the dependent
+    /// server selection is normalized (e.g. leaving the OpenCode view clears a
+    /// stale `.server` scope that would otherwise still label Settings).
+    func setSelection(_ selection: ProviderSelection) {
+        self.selection = selection
+        normalizeSelection()
+    }
+
+    /// Views showing the history dashboard register themselves so the refresh
+    /// loop only pays for the aggregation while someone is looking at it.
+    func beginObservingHistoryDashboard() {
+        historyDashboardObservers += 1
+        Task { await refreshHistoryDashboard() }
+    }
+
+    func endObservingHistoryDashboard() {
+        historyDashboardObservers = max(0, historyDashboardObservers - 1)
     }
 
     func setOpenCodeServerSelection(_ selection: OpenCodeServerSelection) {

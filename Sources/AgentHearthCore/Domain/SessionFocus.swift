@@ -49,6 +49,8 @@ public struct SessionFocusPreferences: Codable, Equatable, Sendable {
     /// Pins that stop matching any observed session are dropped after this
     /// interval, so refs to deleted sessions cannot accumulate forever.
     public static let pruneInterval: TimeInterval = 7 * 24 * 60 * 60
+    /// Minimum spacing between two persisted `lastSeenAt` updates for a live pin.
+    public static let lastSeenGranularity: TimeInterval = 60
 
     public var mode: NotificationFocusMode
     public var askOnNewSession: Bool
@@ -137,7 +139,13 @@ public struct SessionFocusPreferences: Codable, Equatable, Sendable {
                     changed = true
                     continue
                 }
-                if lastSeenAt[ref.key] != now {
+                // The last-seen clock only feeds the seven-day prune, so it is
+                // advanced at minute granularity: refreshing it on every 5 s
+                // poll re-encoded and rewrote the whole preference each time.
+                let isFresh = lastSeenAt[ref.key].map { seen in
+                    now >= seen && now.timeIntervalSince(seen) < Self.lastSeenGranularity
+                } ?? false
+                if !isFresh {
                     lastSeenAt[ref.key] = now
                     changed = true
                 }
