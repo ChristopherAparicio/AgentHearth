@@ -86,7 +86,13 @@ public struct ClaudeCodeConnectorInstaller {
             at: settingsURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        let data = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
+        // `settings.json` is the user's file, not ours: keep a copy of the
+        // version we are about to rewrite so a bad merge is always recoverable.
+        try ConnectorConfigBackup.preserve(settingsURL)
+        let data = try JSONSerialization.data(
+            withJSONObject: root,
+            options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        )
         try data.write(to: settingsURL, options: .atomic)
     }
 

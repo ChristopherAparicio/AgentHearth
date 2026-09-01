@@ -2,6 +2,29 @@ import AgentHearthApplication
 import AgentHearthDomain
 import Foundation
 
+/// Keeps a copy of a user-owned configuration file before an installer
+/// rewrites it. One backup per file (`<name>.agenthearth-backup`), overwritten
+/// on each install, so the version that preceded the latest rewrite is always
+/// recoverable.
+public enum ConnectorConfigBackup {
+    public static let suffix = ".agenthearth-backup"
+
+    public static func backupURL(for url: URL) -> URL {
+        URL(fileURLWithPath: url.path + suffix)
+    }
+
+    /// No-op when the file does not exist yet. Permissions of the original are
+    /// preserved by copying the file rather than rewriting its bytes.
+    public static func preserve(_ url: URL, fileManager: FileManager = .default) throws {
+        guard fileManager.fileExists(atPath: url.path) else { return }
+        let destination = backupURL(for: url)
+        if fileManager.fileExists(atPath: destination.path) {
+            try fileManager.removeItem(at: destination)
+        }
+        try fileManager.copyItem(at: url, to: destination)
+    }
+}
+
 public enum ConnectorInstallationState: Equatable, Sendable {
     case notInstalled
     case installed

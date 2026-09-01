@@ -45,5 +45,39 @@ final class ClaudeCodeConnectorInstallerTests: XCTestCase {
         let configData = try Data(contentsOf: bridgeConfig)
         let config = try XCTUnwrap(JSONSerialization.jsonObject(with: configData) as? [String: Any])
         XCTAssertEqual(config["previousStatusLineCommand"] as? String, "existing-statusline")
+
+        // The user's settings are rewritten, so the pre-rewrite copy is kept
+        // next to them, and paths are written without JSON `\/` escapes.
+        let backup = ConnectorConfigBackup.backupURL(for: settings)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: backup.path))
+        let text = try String(contentsOf: settings, encoding: .utf8)
+        XCTAssertFalse(text.contains("\\/"))
+        XCTAssertTrue(text.contains(installed.path))
+    }
+
+    func testBackupHoldsTheVersionBeforeTheLatestInstall() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "AgentHearth-Claude-Backup-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let settings = root.appending(path: ".claude/settings.json")
+        let source = root.appending(path: "source.py")
+        try FileManager.default.createDirectory(at: settings.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("print('hook')".utf8).write(to: source)
+        let original = #"{"theme":"dark"}"#
+        try Data(original.utf8).write(to: settings)
+
+        let installer = ClaudeCodeConnectorInstaller(
+            settingsURL: settings,
+            hookScriptURL: root.appending(path: ".config/agenthearth/claude-code-hook.py"),
+            bridgeConfigURL: root.appending(path: ".config/agenthearth/claude-code.json")
+        )
+        try installer.install(from: source)
+        let backup = ConnectorConfigBackup.backupURL(for: settings)
+        XCTAssertEqual(try String(contentsOf: backup, encoding: .utf8), original)
+
+        // A missing settings file simply means there is nothing to back up.
+        let fresh = root.appending(path: "fresh/settings.json")
+        try ConnectorConfigBackup.preserve(fresh)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: ConnectorConfigBackup.backupURL(for: fresh).path))
     }
 }

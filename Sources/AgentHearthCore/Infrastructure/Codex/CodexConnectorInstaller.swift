@@ -60,6 +60,8 @@ public struct CodexConnectorInstaller {
             at: configURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
+        // `config.toml` is the user's file: keep the pre-rewrite copy next to it.
+        try ConnectorConfigBackup.preserve(configURL)
         try Data(updated.utf8).write(to: configURL, options: .atomic)
     }
 

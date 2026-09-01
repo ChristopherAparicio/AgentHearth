@@ -35,5 +35,10 @@ final class CodexConnectorInstallerTests: XCTestCase {
         // written verbatim.
         XCTAssertFalse(value.contains("\\/"), "config.toml must not contain invalid TOML escape sequences")
         XCTAssertTrue(value.contains(installed.path), "config.toml must contain the unescaped hook path")
+
+        // The pre-rewrite copy of the user's config is kept next to it.
+        let backup = ConnectorConfigBackup.backupURL(for: config)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: backup.path))
+        XCTAssertTrue(try String(contentsOf: backup, encoding: .utf8).contains("model = \"gpt-5.6-sol\""))
     }
 }
