@@ -20,6 +20,16 @@ struct LocalHTTPRequest {
 struct LocalHTTPRequestReader {
     let maximumRequestSize = 1_048_576
 
+    /// The declared body length of a request, or the reason none can be trusted.
+    private enum ContentLength: Equatable {
+        case absent
+        case declared(Int)
+        /// Non-numeric, negative, or larger than `maximumRequestSize`. Such a
+        /// request is rejected before any body byte is read: a negative value
+        /// used to build an inverted `Range` and trap the whole process.
+        case invalid
+    }
+
     func readRequest(from socket: Int32) -> LocalHTTPRequest? {
         let headerDelimiter = Data("\r\n\r\n".utf8)
         var data = Data()
@@ -36,7 +46,11 @@ struct LocalHTTPRequestReader {
                 headerEnd = delimiterRange.upperBound
                 let headerData = data[..<delimiterRange.lowerBound]
                 guard let header = String(data: headerData, encoding: .utf8) else { return nil }
-                contentLength = parseContentLength(from: header) ?? 0
+                switch parseContentLength(from: header) {
+                case .absent: contentLength = 0
+                case let .declared(length): contentLength = length
+                case .invalid: return nil
+                }
             }
 
             if let headerEnd, let contentLength, data.count - headerEnd >= contentLength {
@@ -55,7 +69,12 @@ struct LocalHTTPRequestReader {
         let requestLine = lines.first?.split(separator: " ") ?? []
         guard requestLine.count >= 2 else { return nil }
 
-        let expectedBodyLength = parseContentLength(from: header) ?? 0
+        let expectedBodyLength: Int
+        switch parseContentLength(from: header) {
+        case .absent: expectedBodyLength = 0
+        case let .declared(length): expectedBodyLength = length
+        case .invalid: return nil
+        }
         let bodyStart = delimiterRange.upperBound
         guard data.count - bodyStart >= expectedBodyLength else { return nil }
         let bodyEnd = bodyStart + expectedBodyLength
@@ -77,7 +96,7 @@ struct LocalHTTPRequestReader {
         )
     }
 
-    private func parseContentLength(from header: String) -> Int? {
+    private func parseContentLength(from header: String) -> ContentLength {
         for line in header.components(separatedBy: "\r\n") {
             let parts = line.split(separator: ":", maxSplits: 1)
             guard parts.count == 2,
@@ -86,8 +105,13 @@ struct LocalHTTPRequestReader {
             else {
                 continue
             }
-            return Int(parts[1].trimmingCharacters(in: .whitespacesAndNewlines))
+            guard let length = Int(parts[1].trimmingCharacters(in: .whitespacesAndNewlines)),
+                  (0...maximumRequestSize).contains(length)
+            else {
+                return .invalid
+            }
+            return .declared(length)
         }
-        return nil
+        return .absent
     }
 }

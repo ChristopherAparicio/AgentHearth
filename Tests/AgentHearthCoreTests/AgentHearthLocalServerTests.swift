@@ -1,3 +1,4 @@
+import Darwin
 import XCTest
 @testable import AgentHearthApplication
 @testable import AgentHearthDomain
@@ -124,6 +125,57 @@ final class AgentHearthLocalServerTests: XCTestCase {
         XCTAssertEqual(status, 202)
         let count = await box.count
         XCTAssertEqual(count, 1)
+    }
+
+    /// Regression: a negative `Content-Length` built an inverted `Range` in the
+    /// request reader and trapped the whole process — before the Origin/token
+    /// checks, so any local process could crash the app with one request.
+    func testRejectsNegativeContentLengthWithoutCrashing() async throws {
+        let box = Box()
+        _ = try makeServer(box)
+        // Warm up: URLSession's retry loop also waits for the accept loop.
+        _ = try await getHealth()
+
+        let malicious = "POST /v1/providers/claude-code/events HTTP/1.1\r\n"
+            + "Host: 127.0.0.1\r\nContent-Length: -1\r\n\r\n"
+        let response = try sendRaw(malicious)
+        XCTAssertTrue(response.hasPrefix("HTTP/1.1 400"), "got: \(response)")
+
+        let oversized = "POST /v1/providers/claude-code/events HTTP/1.1\r\n"
+            + "Host: 127.0.0.1\r\nContent-Length: 99999999999\r\n\r\n"
+        XCTAssertTrue(try sendRaw(oversized).hasPrefix("HTTP/1.1 400"))
+
+        // The server is still alive and functional afterwards.
+        let (status, _) = try await getHealth()
+        XCTAssertEqual(status, 200)
+        let count = await box.count
+        XCTAssertEqual(count, 0)
+    }
+
+    /// Writes raw bytes to the server socket (URLSession cannot emit an invalid
+    /// Content-Length) and returns the response head.
+    private func sendRaw(_ request: String) throws -> String {
+        let socket = Darwin.socket(AF_INET, SOCK_STREAM, 0)
+        XCTAssertGreaterThanOrEqual(socket, 0)
+        defer { Darwin.close(socket) }
+        var timeout = timeval(tv_sec: 3, tv_usec: 0)
+        setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        var address = sockaddr_in()
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = port.bigEndian
+        address.sin_addr.s_addr = inet_addr("127.0.0.1")
+        let connected = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.connect(socket, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        XCTAssertEqual(connected, 0, "connect failed: errno \(errno)")
+        let bytes = Array(request.utf8)
+        XCTAssertEqual(Darwin.send(socket, bytes, bytes.count, 0), bytes.count)
+        var buffer = [UInt8](repeating: 0, count: 4_096)
+        let received = Darwin.recv(socket, &buffer, buffer.count, 0)
+        guard received > 0 else { return "<no response, errno \(errno)>" }
+        return String(decoding: buffer[..<received], as: UTF8.self)
     }
 
     private func getHealth() async throws -> (Int, Data) {
