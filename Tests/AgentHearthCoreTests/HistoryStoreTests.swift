@@ -84,6 +84,33 @@ final class HistoryStoreTests: XCTestCase {
         XCTAssertEqual(codexOnly.projects.first?.cacheReuseRate, 0.9)
     }
 
+    /// Regression: `external_id` derives from `lastActivityAt`, which hook
+    /// events move forward. When the hook aged out, the same terminal counters
+    /// came back under the earlier transcript timestamp and were stored again.
+    func testDoesNotDoubleCountATurnWhoseActivityTimestampShifts() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = HistoryStore(databaseURL: directory.appending(path: "history.sqlite"))
+        let transcriptTime = Date.now.addingTimeInterval(-3 * 60 * 60)
+        let hookTime = transcriptTime.addingTimeInterval(4)
+
+        await store.ingest([snapshot(status: .idle, input: 100, cached: 900, output: 50, at: hookTime)], retentionDays: 30)
+        // Two hours later the hook is pruned and the activity time reverts.
+        await store.ingest([snapshot(status: .idle, input: 100, cached: 900, output: 50, at: transcriptTime)], retentionDays: 30)
+        let afterShift = await store.dashboard(days: 7)
+        XCTAssertEqual(afterShift.turnCount, 1)
+
+        // A genuinely new turn (different counters) is still stored.
+        await store.ingest([snapshot(status: .idle, input: 120, cached: 1_000, output: 80, at: transcriptTime.addingTimeInterval(60))], retentionDays: 30)
+        let afterNewTurn = await store.dashboard(days: 7)
+        XCTAssertEqual(afterNewTurn.turnCount, 2)
+
+        // Identical counters well outside the hook window are a new turn too.
+        await store.ingest([snapshot(status: .idle, input: 120, cached: 1_000, output: 80, at: transcriptTime.addingTimeInterval(2 * 60 * 60 + 120))], retentionDays: 30)
+        let afterRepeat = await store.dashboard(days: 7)
+        XCTAssertEqual(afterRepeat.turnCount, 3)
+    }
+
     private func temporaryDirectory() throws -> URL {
         let directory = FileManager.default.temporaryDirectory.appending(path: "AgentHearth-HistoryStoreTests-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

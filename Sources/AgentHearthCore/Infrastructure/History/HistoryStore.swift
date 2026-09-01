@@ -26,7 +26,6 @@ public actor HistoryStore {
     public func ingest(_ snapshots: [ProviderSnapshot], retentionDays: Int) {
         guard let database = openDatabase() else { return }
         sqlite3_exec(database, "BEGIN IMMEDIATE", nil, nil, nil)
-        defer { sqlite3_exec(database, "COMMIT", nil, nil, nil) }
         for session in snapshots.flatMap(\.sessions) {
             // Working sessions often emit progressive totals. Wait for the
             // terminal state to avoid treating one turn as several turns.
@@ -39,7 +38,11 @@ public actor HistoryStore {
             guard fresh + cached + written > 0 else { continue }
             insertMeasurement(database: database, session: session, inputTokens: fresh)
         }
-        prune(database: database, retentionDays: retentionDays)
+        let pruned = prune(database: database, retentionDays: retentionDays)
+        sqlite3_exec(database, "COMMIT", nil, nil, nil)
+        // A checkpoint cannot make progress inside the write transaction it is
+        // issued from, so it only runs once the pruning commit has landed.
+        if pruned { sqlite3_exec(database, "PRAGMA wal_checkpoint(PASSIVE)", nil, nil, nil) }
     }
 
     public func dashboard(
@@ -102,7 +105,9 @@ public actor HistoryStore {
 
     public func applyRetention(days: Int) {
         guard let database = openDatabase() else { return }
-        prune(database: database, retentionDays: days, force: true)
+        if prune(database: database, retentionDays: days, force: true) {
+            sqlite3_exec(database, "PRAGMA wal_checkpoint(PASSIVE)", nil, nil, nil)
+        }
     }
 
     private func openDatabase() -> OpaquePointer? {
@@ -150,6 +155,33 @@ public actor HistoryStore {
 
     private func insertMeasurement(database: OpaquePointer, session: AgentSession, inputTokens: Int) {
         let key = sessionKey(session)
+        // `inputTokens` is the provider's raw (uncached) count, so the stored
+        // total is fresh + cache-read + cache-creation. Storing the raw input
+        // and clamping the cache to it reported 100% reuse for every turn.
+        let rawInput = max(0, inputTokens)
+        let cached = max(0, session.cache.cachedReadTokens ?? 0)
+        let written = max(0, session.cache.cacheWriteTokens ?? 0)
+        let totalInput = rawInput + cached + written
+        let output = max(0, session.cache.outputTokens ?? 0)
+
+        // The timestamp-based `external_id` alone is not enough for
+        // idempotency: `lastActivityAt` also moves with hook events (which are
+        // kept for two hours), so when a hook ages out the same last-turn
+        // counters come back under an earlier timestamp and would be stored as
+        // a second turn. A reading whose counters equal the latest recorded
+        // row for the session, within that hook window, is the same turn.
+        // Identical counters farther apart are treated as a genuine new turn.
+        if matchesLatestMeasurement(
+            database: database,
+            sessionKey: key,
+            occurredAt: milliseconds(session.lastActivityAt),
+            inputTokens: totalInput,
+            cachedInputTokens: cached,
+            outputTokens: output
+        ) {
+            return
+        }
+
         let externalID = "\(key):\(milliseconds(session.lastActivityAt))"
         let sql = """
         INSERT OR IGNORE INTO cache_events(
@@ -168,17 +200,46 @@ public actor HistoryStore {
         bind(session.title, to: statement, at: 7)
         bindOptional(session.model, to: statement, at: 8)
         sqlite3_bind_int64(statement, 9, milliseconds(session.lastActivityAt))
-        // `inputTokens` is the provider's raw (uncached) count, so the stored
-        // total is fresh + cache-read + cache-creation. Storing the raw input
-        // and clamping the cache to it reported 100% reuse for every turn.
-        let rawInput = max(0, inputTokens)
-        let cached = max(0, session.cache.cachedReadTokens ?? 0)
-        let written = max(0, session.cache.cacheWriteTokens ?? 0)
-        let totalInput = rawInput + cached + written
         sqlite3_bind_int64(statement, 10, Int64(totalInput))
         sqlite3_bind_int64(statement, 11, Int64(cached))
-        sqlite3_bind_int64(statement, 12, Int64(max(0, session.cache.outputTokens ?? 0)))
+        sqlite3_bind_int64(statement, 12, Int64(output))
         sqlite3_step(statement)
+    }
+
+    /// Window within which a reading with identical counters is the same turn
+    /// seen under a shifted timestamp (matches the connectors' hook retention).
+    private static let sameTurnWindowMilliseconds: Int64 = 2 * 60 * 60 * 1_000
+
+    /// Whether the most recent row for this session already carries exactly
+    /// these last-turn counters and lies within `sameTurnWindowMilliseconds`
+    /// of `occurredAt`. Uses the `(session_key, occurred_at_ms)` index.
+    private func matchesLatestMeasurement(
+        database: OpaquePointer,
+        sessionKey: String,
+        occurredAt: Int64,
+        inputTokens: Int,
+        cachedInputTokens: Int,
+        outputTokens: Int
+    ) -> Bool {
+        let sql = """
+        SELECT input_tokens,cached_input_tokens,output_tokens,occurred_at_ms FROM cache_events
+        WHERE session_key=? ORDER BY occurred_at_ms DESC LIMIT 1
+        """
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK, let statement else { return false }
+        defer { sqlite3_finalize(statement) }
+        bind(sessionKey, to: statement, at: 1)
+        guard sqlite3_step(statement) == SQLITE_ROW else { return false }
+        let latestOccurredAt = sqlite3_column_int64(statement, 3)
+        return sqlite3_column_int64(statement, 0) == Int64(inputTokens)
+            && sqlite3_column_int64(statement, 1) == Int64(cachedInputTokens)
+            && sqlite3_column_int64(statement, 2) == Int64(outputTokens)
+            && abs(occurredAt - latestOccurredAt) <= Self.sameTurnWindowMilliseconds
+    }
+
+    /// Size of the database and its WAL/shm companions on disk.
+    public func storageBytes() -> Int64 {
+        fileSize()
     }
 
     private func loadBuckets(
@@ -307,14 +368,20 @@ public actor HistoryStore {
         bindOptional(providerID?.rawValue, to: statement, at: 5)
     }
 
-    private func prune(database: OpaquePointer, retentionDays: Int, force: Bool = false) {
+    /// Deletes rows older than the retention window at most every six hours
+    /// (always when `force`). Returns whether a pruning pass ran, so the caller
+    /// can checkpoint the WAL once the surrounding transaction has committed.
+    @discardableResult
+    private func prune(database: OpaquePointer, retentionDays: Int, force: Bool = false) -> Bool {
         let now = Date.now
-        if !force, let lastPrunedAt, now.timeIntervalSince(lastPrunedAt) < 6 * 60 * 60 { return }
+        if !force, let lastPrunedAt, now.timeIntervalSince(lastPrunedAt) < 6 * 60 * 60 { return false }
         var statement: OpaquePointer?
-        guard sqlite3_prepare_v2(database, "DELETE FROM cache_events WHERE occurred_at_ms < ?", -1, &statement, nil) == SQLITE_OK, let statement else { return }
+        guard sqlite3_prepare_v2(database, "DELETE FROM cache_events WHERE occurred_at_ms < ?", -1, &statement, nil) == SQLITE_OK, let statement else { return false }
         defer { sqlite3_finalize(statement) }
         sqlite3_bind_int64(statement, 1, milliseconds(now.addingTimeInterval(-TimeInterval(max(1, retentionDays) * 86_400))))
-        sqlite3_step(statement); sqlite3_exec(database, "PRAGMA wal_checkpoint(PASSIVE)", nil, nil, nil); lastPrunedAt = now
+        sqlite3_step(statement)
+        lastPrunedAt = now
+        return true
     }
 
     private func sessionKey(_ session: AgentSession) -> String { [session.providerID.rawValue, session.host.id, session.target?.sessionID ?? session.id].joined(separator: ":") }
