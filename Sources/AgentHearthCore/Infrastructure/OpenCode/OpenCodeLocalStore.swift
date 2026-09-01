@@ -201,7 +201,7 @@ struct OpenCodeLocalStore: OpenCodeLocalReading, @unchecked Sendable {
         return AgentSession(
             id: row.id,
             providerID: .openCode,
-            title: row.title.isEmpty ? row.id : row.title,
+            title: SessionTitle.normalized(row.title, fallback: row.id),
             projectName: directory.lastPathComponent,
             model: model,
             status: status,

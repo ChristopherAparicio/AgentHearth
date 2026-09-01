@@ -93,8 +93,11 @@ public actor ClaudeCodeConnector: ProviderConnector, AccountUsageIngesting {
         pruneSummaries(keeping: files)
         var sessionsByID: [String: AgentSession] = [:]
 
+        // `files` is sorted newest-first. Two transcripts can carry the same
+        // session ID (a resumed session copies its history before writing a
+        // record with its own ID), so the first — freshest — file must win.
         for candidate in files {
-            guard let session = parse(candidate) else { continue }
+            guard let session = parse(candidate), sessionsByID[session.id] == nil else { continue }
             sessionsByID[session.id] = session
         }
 

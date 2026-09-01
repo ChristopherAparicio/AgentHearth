@@ -368,6 +368,31 @@ public enum ProviderConnectionState: Equatable, Sendable {
     case unavailable
 }
 
+/// Normalizes a provider-supplied session title before it enters the domain.
+///
+/// Provider titles are often generated from the first user prompt (OpenCode)
+/// or summarized from the conversation (Claude Code), so they are the closest
+/// thing in the pipeline to prompt content. They are shown in notifications
+/// and persisted in the local history, so every connector routes them through
+/// this single cap instead of copying the raw value.
+public enum SessionTitle {
+    public static let maximumLength = 120
+
+    /// Trims whitespace, collapses line breaks, and caps the length. Returns
+    /// `fallback` (typically the session identifier) when nothing usable remains.
+    public static func normalized(_ value: String?, fallback: String) -> String {
+        guard let value else { return fallback }
+        let singleLine = value
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        let trimmed = singleLine.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return fallback }
+        return String(trimmed.prefix(maximumLength))
+    }
+}
+
 public struct ProviderSnapshot: Identifiable, Equatable, Sendable {
     public let id: AgentProviderID
     public let connectionState: ProviderConnectionState

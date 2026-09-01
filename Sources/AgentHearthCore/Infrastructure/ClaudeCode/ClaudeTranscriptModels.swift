@@ -29,9 +29,8 @@ extension ClaudeCodeConnector {
     }
 
     static func sanitizedTitle(_ value: String) -> String? {
-        let title = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !title.isEmpty else { return nil }
-        return String(title.prefix(120))
+        let title = SessionTitle.normalized(value, fallback: "")
+        return title.isEmpty ? nil : title
     }
 }
 

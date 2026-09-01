@@ -75,13 +75,21 @@ public actor OpenCodeServerConnector: ProviderConnector {
 
     public func setSourceMode(_: ProviderDataSourceMode) {}
 
+    /// `urlPathAllowed` keeps `/` literal; a path *segment* must escape it too.
+    static let pathSegmentAllowedCharacters = CharacterSet.urlPathAllowed
+        .subtracting(CharacterSet(charactersIn: "/"))
+
     public func snapshot() async throws -> ProviderSnapshot {
         async let sessionsData = loader.load(path: "/session", port: configuration.port)
         async let statusesData = loader.load(path: "/session/status", port: configuration.port)
         let decoder = JSONDecoder()
         let sessionsPayload = try await sessionsData
         let statusesPayload = try? await statusesData
-        let apiSessions = try decoder.decode([APISession].self, from: sessionsPayload)
+        // One malformed row (schema drift, a legacy session) must not take the
+        // whole provider down: rows that fail to decode are skipped, like the
+        // per-session message decoding below.
+        let apiSessions = try decoder.decode([LenientRow<APISession>].self, from: sessionsPayload)
+            .compactMap(\.value)
         let statuses = statusesPayload.flatMap {
             try? decoder.decode([String: APIStatus].self, from: $0)
         } ?? [:]
@@ -105,8 +113,11 @@ public actor OpenCodeServerConnector: ProviderConnector {
         ) { group in
             for session in candidates where messagesBySession[session.id] == nil {
                 group.addTask { [loader, configuration] in
-                    let encodedID = session.id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
-                        ?? session.id
+                    // The ID comes from the server's own JSON; encode it as a
+                    // single path segment so a `/` cannot address another route.
+                    let encodedID = session.id.addingPercentEncoding(
+                        withAllowedCharacters: Self.pathSegmentAllowedCharacters
+                    ) ?? session.id
                     let messages: [APIMessage]
                     do {
                         let data = try await loader.load(
@@ -197,7 +208,7 @@ public actor OpenCodeServerConnector: ProviderConnector {
         return AgentSession(
             id: "\(host.id):opencode:\(configuration.id):\(session.id)",
             providerID: .openCode,
-            title: session.title.isEmpty ? session.id : session.title,
+            title: SessionTitle.normalized(session.title, fallback: session.id),
             projectName: directory.lastPathComponent,
             model: model,
             status: status,
@@ -267,6 +278,16 @@ private struct APISession: Decodable, Sendable {
 
 private struct APIStatus: Decodable, Sendable {
     let type: String
+}
+
+/// Decodes an array element leniently: a row that does not match the model
+/// becomes `nil` instead of failing the whole array.
+private struct LenientRow<Value: Decodable & Sendable>: Decodable, Sendable {
+    let value: Value?
+
+    init(from decoder: Decoder) throws {
+        value = try? Value(from: decoder)
+    }
 }
 
 private struct APIMessage: Decodable, Sendable {

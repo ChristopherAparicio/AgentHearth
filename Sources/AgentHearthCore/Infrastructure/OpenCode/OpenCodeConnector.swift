@@ -64,7 +64,14 @@ public actor OpenCodeConnector: ProviderConnector {
             ? localStore.snapshot()
             : OpenCodeLocalSnapshot(isAvailable: false, sessions: [], updatedAt: .distantPast)
 
-        var sessionsByID = Dictionary(uniqueKeysWithValues: local.sessions.map { ($0.id, $0) })
+        // The rows come from another application's database: never trust its
+        // primary key enough to trap on a duplicate; keep the freshest row.
+        var sessionsByID = Dictionary(
+            local.sessions.map { ($0.id, $0) },
+            uniquingKeysWith: { first, second in
+                first.lastActivityAt >= second.lastActivityAt ? first : second
+            }
+        )
         if sourceMode.usesRealtimeData {
             var newestBySession: [String: OpenCodeSessionReport] = [:]
             for report in livePayloads.flatMap(\.sessions) {
@@ -117,7 +124,7 @@ public actor OpenCodeConnector: ProviderConnector {
         return AgentSession(
             id: report.id,
             providerID: providerID,
-            title: report.title.isEmpty ? report.id : report.title,
+            title: SessionTitle.normalized(report.title, fallback: report.id),
             projectName: directory.lastPathComponent,
             model: report.model,
             status: normalize(report.status),
