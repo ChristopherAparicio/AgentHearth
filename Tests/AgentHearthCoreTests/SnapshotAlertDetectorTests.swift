@@ -174,6 +174,75 @@ final class SnapshotAlertDetectorTests: XCTestCase {
         XCTAssertEqual(reactivatedAlerts.map(\.type), ["session.promote"])
     }
 
+    /// Regression: the warning was gated on `.expiring`, which connectors only
+    /// set in the last 60 s, so a 5-minute lead time could never fire — the
+    /// countdown crossed 300 s while the cache was still `.warm`.
+    func testCacheWarningFiresForLeadTimesAboveOneMinute() async {
+        let detector = SnapshotAlertDetector()
+        var preferences = AlertPreferences()
+        preferences.cacheWarningSeconds = 300
+
+        _ = await detector.detect(in: [snapshot(status: .idle, cacheRemaining: 320, usage: 0.1)], preferences: preferences)
+        let crossing = await detector.detect(in: [snapshot(status: .idle, cacheRemaining: 290, usage: 0.1)], preferences: preferences)
+        XCTAssertEqual(crossing.map(\.type), ["cache.expiring"])
+        XCTAssertTrue(crossing.first?.summary.contains("4:50") == true)
+
+        // Still inside the window on the next poll: no repeat.
+        let inside = await detector.detect(in: [snapshot(status: .idle, cacheRemaining: 250, usage: 0.1)], preferences: preferences)
+        XCTAssertTrue(inside.isEmpty)
+
+        // A renewed cache leaves the window and re-arms the warning.
+        _ = await detector.detect(in: [snapshot(status: .idle, cacheRemaining: 1_800, usage: 0.1)], preferences: preferences)
+        let again = await detector.detect(in: [snapshot(status: .idle, cacheRemaining: 299, usage: 0.1)], preferences: preferences)
+        XCTAssertEqual(again.map(\.type), ["cache.expiring"])
+    }
+
+    func testDefaultOneMinuteWarningStillFiresOnce() async {
+        let detector = SnapshotAlertDetector()
+        _ = await detector.detect(in: [snapshot(status: .idle, cacheRemaining: 90, usage: 0.1)], preferences: AlertPreferences())
+        let alerts = await detector.detect(in: [snapshot(status: .idle, cacheRemaining: 59, usage: 0.1)], preferences: AlertPreferences())
+        XCTAssertEqual(alerts.map(\.type), ["cache.expiring"])
+        let repeated = await detector.detect(in: [snapshot(status: .idle, cacheRemaining: 30, usage: 0.1)], preferences: AlertPreferences())
+        XCTAssertTrue(repeated.isEmpty)
+    }
+
+    /// Regression: a transient connector failure emptied the provider's
+    /// sessions for one cycle, and the detector forgot them. On recovery every
+    /// session looked brand new: transitions during the gap were lost and a
+    /// cache already inside the warning window alerted a second time.
+    func testRemembersSessionsAcrossATransientConnectorFailure() async {
+        let detector = SnapshotAlertDetector()
+        _ = await detector.detect(in: [snapshot(status: .working, cacheRemaining: 45, usage: 0.1)], preferences: AlertPreferences())
+
+        let degraded = ProviderSnapshot(
+            id: .codex,
+            connectionState: .degraded(message: "ssh: connect timed out"),
+            sessions: [],
+            usageWindows: []
+        )
+        let duringOutage = await detector.detect(in: [degraded], preferences: AlertPreferences())
+        XCTAssertTrue(duringOutage.isEmpty)
+
+        let recovered = await detector.detect(
+            in: [snapshot(status: .waitingForApproval, cacheRemaining: 40, usage: 0.1)],
+            preferences: AlertPreferences()
+        )
+        XCTAssertEqual(recovered.map(\.type), ["session.waitingForApproval"], "approval alert kept, cache alert not repeated")
+    }
+
+    func testForgetsDisappearedSessionsAfterTheRetentionWindow() async {
+        let clock = MutableClock(Date(timeIntervalSince1970: 1_000))
+        let detector = SnapshotAlertDetector(now: { clock.value })
+        _ = await detector.detect(in: [snapshot(status: .working, cacheRemaining: 45, usage: 0.1)], preferences: AlertPreferences())
+        _ = await detector.detect(in: [], preferences: AlertPreferences())
+
+        clock.value = Date(timeIntervalSince1970: 1_000 + SnapshotAlertDetector.disappearedSessionRetention + 1)
+        _ = await detector.detect(in: [], preferences: AlertPreferences())
+        // Past the retention window the session is new again: the initial cache alert applies.
+        let alerts = await detector.detect(in: [snapshot(status: .working, cacheRemaining: 45, usage: 0.1)], preferences: AlertPreferences())
+        XCTAssertEqual(alerts.map(\.type), ["cache.expiring"])
+    }
+
     private var sessionRef: PrioritySessionRef {
         PrioritySessionRef(providerID: .codex, hostID: AgentHost.local.id, sessionID: "session-1")
     }
@@ -184,6 +253,11 @@ final class SnapshotAlertDetectorTests: XCTestCase {
         pinned: [PrioritySessionRef] = []
     ) -> SessionFocusPreferences {
         SessionFocusPreferences(mode: mode, askOnNewSession: ask, pinned: pinned)
+    }
+
+    private final class MutableClock: @unchecked Sendable {
+        var value: Date
+        init(_ value: Date) { self.value = value }
     }
 
     private func snapshot(status: SessionStatus, cacheRemaining: Int, usage: Double) -> ProviderSnapshot {
