@@ -110,13 +110,16 @@ def bounded_jsonl(path: Path, head_limit: int = 64 * 1024, tail_limit: int = 512
             tail = handle.read(tail_limit)
     except OSError:
         return []
-    if tail_start > 0 and b"\n" in tail:
-        tail = tail.split(b"\n", 1)[1]
-    chunks = [head]
     if tail_start > len(head):
-        chunks.append(tail)
-    elif len(tail) > len(head):
-        chunks = [tail]
+        # A real gap between the windows: drop the tail's leading partial line.
+        if b"\n" in tail:
+            tail = tail.split(b"\n", 1)[1]
+        chunks = [head, tail]
+    else:
+        # The windows overlap (or the tail is the whole file): splice them into
+        # the complete file. Keeping only the tail here lost the first line —
+        # Codex's session_meta — for files between the two limits.
+        chunks = [head + tail[len(head) - tail_start:]]
     records: list[dict[str, Any]] = []
     seen: set[bytes] = set()
     for chunk in chunks:
@@ -336,11 +339,17 @@ def envelope(provider: str, available: bool, sessions: list[dict[str, Any]], usa
     }
 
 
-def process_environments() -> Iterable[dict[str, str]]:
+def running_codex_homes() -> Iterable[str]:
+    """CODEX_HOME values of running Codex processes (Linux /proc only).
+
+    Only that single variable is extracted: the rest of a process environment
+    routinely carries API keys, so it is never decoded or kept in memory.
+    """
     proc = Path("/proc")
     if not proc.exists():
         return []
-    environments: list[dict[str, str]] = []
+    homes: list[str] = []
+    prefix = b"CODEX_HOME="
     for entry in proc.iterdir():
         if not entry.name.isdigit():
             continue
@@ -348,21 +357,20 @@ def process_environments() -> Iterable[dict[str, str]]:
             command = (entry / "cmdline").read_bytes().replace(b"\0", b" ").decode(errors="ignore").lower()
             if "codex" not in command:
                 continue
-            values: dict[str, str] = {}
             for item in (entry / "environ").read_bytes().split(b"\0"):
-                if b"=" not in item:
-                    continue
-                key, value = item.split(b"=", 1)
-                values[key.decode(errors="ignore")] = value.decode(errors="ignore")
-            environments.append(values)
+                if item.startswith(prefix):
+                    value = item[len(prefix):].decode(errors="ignore")
+                    if value:
+                        homes.append(value)
+                    break
         except OSError:
             continue
-    return environments
+    return homes
 
 
 def codex_roots() -> list[Path]:
     candidates = [Path(os.environ.get("CODEX_HOME", "")), HOME / ".codex"]
-    candidates.extend(Path(env["CODEX_HOME"]) for env in process_environments() if env.get("CODEX_HOME"))
+    candidates.extend(Path(home) for home in running_codex_homes())
     roots: list[Path] = []
     for candidate in candidates:
         if not str(candidate) or candidate in roots:
@@ -1010,7 +1018,15 @@ class CollectorHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         if not self._authorized():
             return
-        length = min(int(self.headers.get("Content-Length", "0")), 1_048_576)
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            length = -1
+        if length < 0 or length > 1_048_576:
+            # A negative length would make rfile.read() block until the peer
+            # closes; an oversized one is rejected before reading anything.
+            self.respond(400, {"error": "invalid Content-Length"})
+            return
         try:
             payload = json.loads(self.rfile.read(length))
         except (UnicodeDecodeError, ValueError):

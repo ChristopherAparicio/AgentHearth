@@ -44,6 +44,27 @@ final class BoundedJSONLReaderTests: XCTestCase {
         XCTAssertTrue(rows.allSatisfy { $0.n >= 1 && $0.n <= 50 })
     }
 
+    /// Regression: when the file is larger than the tail limit but smaller than
+    /// head + tail, the two windows overlap and the reader used the tail alone,
+    /// dropping the first line (Codex's `session_meta`, hence the session ID).
+    func testKeepsFirstLineWhenHeadAndTailWindowsOverlap() throws {
+        let headLimit = 64
+        let tailLimit = 512
+        // Each line is 9-10 bytes; sizes probe below, inside, and above the
+        // overlap band (tailLimit, tailLimit + headLimit].
+        for lineCount in [40, 55, 56, 60, 70, 200] {
+            var text = "{\"n\":0}\n"
+            for i in 1..<lineCount { text += String(format: "{\"n\":%3d}\n", i) }
+            let url = try write(text)
+            let rows = BoundedJSONLReader.decode(Row.self, from: url, headByteLimit: headLimit, tailByteLimit: tailLimit)
+            XCTAssertEqual(rows.first, Row(n: 0), "first line lost for \(text.utf8.count) bytes")
+            XCTAssertEqual(rows.last, Row(n: lineCount - 1))
+            if text.utf8.count <= headLimit + tailLimit {
+                XCTAssertEqual(rows.count, lineCount, "small file must be read whole (\(text.utf8.count) bytes)")
+            }
+        }
+    }
+
     func testEmptyFileReturnsNoRows() throws {
         let url = try write("")
         XCTAssertTrue(BoundedJSONLReader.decode(Row.self, from: url).isEmpty)
