@@ -88,4 +88,31 @@ final class ClaudeAccountUsageFetcherTests: XCTestCase {
         let outcome = await makeFetcher().fetchUsage(accessToken: "t")
         guard case .failed = outcome else { return XCTFail("expected failed, got \(outcome)") }
     }
+    // MARK: - Credential store selection
+
+    /// Claude Code 2.1 keeps its sign-in in suffixed items and blanks the bare
+    /// one; a store with empty token strings must never count as a sign-in.
+    func testBlankedStoreIsNotACredential() {
+        let blank = Data(#"{"claudeAiOauth":{"accessToken":"","refreshToken":"","expiresAt":0}}"#.utf8)
+        XCTAssertNil(ClaudeAccountUsageFetcher.parseCredentials(blank))
+        XCTAssertNil(ClaudeAccountUsageFetcher.parseCredentials(Data(#"{"mcpOAuth":{}}"#.utf8)))
+        XCTAssertNil(ClaudeAccountUsageFetcher.parseCredentials(Data("not json".utf8)))
+    }
+
+    func testParsesTokenAndMillisecondExpiry() throws {
+        let data = Data(#"{"claudeAiOauth":{"accessToken":"tok","expiresAt":1700000000000}}"#.utf8)
+        let credentials = try XCTUnwrap(ClaudeAccountUsageFetcher.parseCredentials(data))
+        XCTAssertEqual(credentials.accessToken, "tok")
+        XCTAssertEqual(credentials.expiresAt, Date(timeIntervalSince1970: 1_700_000_000))
+    }
+
+    func testSelectsTheFreshestValidTokenAcrossStores() {
+        let now = Date(timeIntervalSince1970: 10_000)
+        let stale = ClaudeAccountUsageFetcher.Credentials(accessToken: "old", expiresAt: now.addingTimeInterval(-3_600))
+        let soon = ClaudeAccountUsageFetcher.Credentials(accessToken: "soon", expiresAt: now.addingTimeInterval(600))
+        let later = ClaudeAccountUsageFetcher.Credentials(accessToken: "later", expiresAt: now.addingTimeInterval(7_200))
+        XCTAssertEqual(ClaudeAccountUsageFetcher.selectFreshest([stale, soon, later], now: now)?.accessToken, "later")
+        XCTAssertEqual(ClaudeAccountUsageFetcher.selectFreshest([stale], now: now)?.accessToken, "old", "an expired token still reports as expired rather than missing")
+        XCTAssertNil(ClaudeAccountUsageFetcher.selectFreshest([], now: now))
+    }
 }

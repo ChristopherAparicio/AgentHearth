@@ -151,7 +151,9 @@ arguments, and transcript contents are never posted.
 
 **Settings → Claude Usage Limits → Fetch reset times from Anthropic** is off
 by default. When you turn it on, AgentHearth reads the OAuth token that Claude
-Code already stores in your login keychain (item `Claude Code-credentials`)
+Code already stores in your login keychain (items named `Claude Code-credentials`,
+plain or suffixed with a profile id as Claude Code 2.1 does; the freshest
+usable token wins, with `~/.claude/.credentials.json` as a last resort)
 and calls Anthropic's usage endpoint to get the exact 5-hour and 7-day reset
 times. The token is read once per launch, kept in memory, and read again only
 after it expires or rotates. It is never written, refreshed, or sent anywhere
