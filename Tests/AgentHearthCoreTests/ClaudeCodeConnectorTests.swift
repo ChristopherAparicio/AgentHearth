@@ -325,7 +325,7 @@ final class ClaudeCodeConnectorTests: XCTestCase {
         let snapshot = try await connector.snapshot()
 
         XCTAssertEqual(snapshot.usageWindows.map(\.id), ["claude-5h", "claude-7d", "claude-7d-fable"])
-        XCTAssertEqual(snapshot.usageWindows.last?.label, "7 days · Fable")
+        XCTAssertEqual(snapshot.usageWindows.last?.label, "Fable")
         XCTAssertEqual(snapshot.usageWindows.last?.usedFraction ?? 0, 0.56, accuracy: 0.0001)
         XCTAssertEqual(snapshot.usageWindows.last?.resetsAt, Date(timeIntervalSince1970: 9_100))
 

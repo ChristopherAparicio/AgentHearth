@@ -182,7 +182,7 @@ final class PreferencesStore {
         set { defaults.set(newValue, forKey: PreferenceKey.claudeAccountUsageEnabled) }
     }
 
-    /// Show Anthropic's per-model weekly limits (e.g. "7 days · Fable") next
+    /// Show Anthropic's per-model weekly limits (e.g. a "Fable" bar under "7 days") next
     /// to the global windows. On by default: they are usually the binding limit.
     var showsClaudeScopedWeeklyLimits: Bool {
         get { defaults.object(forKey: PreferenceKey.showsClaudeScopedWeeklyLimits) as? Bool ?? true }

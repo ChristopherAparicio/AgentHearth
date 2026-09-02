@@ -195,7 +195,9 @@ public actor ClaudeCodeConnector: ProviderConnector, AccountUsageIngesting {
             for scoped in account.scopedWeekly {
                 let id = "claude-7d-\(scoped.id)"
                 add(id, scoped.window.utilizationFraction, account.fetchedAt, scoped.window.resetsAt)
-                ordered.append((id, "7 days · \(scoped.label)"))
+                // Labeled by model only: it sits right under the "7 days" bar,
+                // so repeating the period would only add noise.
+                ordered.append((id, scoped.label))
             }
         }
         return ordered.compactMap { meta in

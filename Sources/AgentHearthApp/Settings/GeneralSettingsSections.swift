@@ -126,7 +126,7 @@ struct ClaudeUsageSettingsSection: View {
 
     private var scopedLimitsCaption: String {
         let labels = model.accountUsagePoller.scopedWeeklyLimitLabels
-        let base = "Anthropic also enforces a separate weekly limit per model, which is often the one that actually binds. It appears as an extra “7 days · <model>” bar on the Claude card and as a usage window in the menu bar."
+        let base = "Anthropic also enforces a separate weekly limit per model, which is often the one that actually binds. It appears as an extra bar named after the model, right under the 7-day bar on the Claude card, and as a usage window in the menu bar."
         guard !labels.isEmpty else { return base }
         return base + " Currently reported: \(labels.joined(separator: ", "))."
     }
