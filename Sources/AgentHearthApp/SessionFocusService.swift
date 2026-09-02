@@ -48,6 +48,17 @@ final class SessionFocusService {
         preferences.unpin(ref)
     }
 
+    /// Pins every given session; returns how many were newly pinned.
+    @discardableResult
+    func pinAll(_ sessions: [AgentSession]) -> Int {
+        preferences.pinAll(sessions, now: .now)
+    }
+
+    @discardableResult
+    func unpinAll() -> Int {
+        preferences.unpinAll()
+    }
+
     func setMode(_ mode: NotificationFocusMode) {
         preferences.mode = mode
     }

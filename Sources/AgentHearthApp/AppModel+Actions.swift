@@ -65,6 +65,25 @@ extension AppModel {
         }
     }
 
+    /// Every observed session (all providers and hosts) whose prompt cache is
+    /// still warm: the candidates for "pin all warm-cache sessions".
+    var warmCacheSessions: [AgentSession] {
+        snapshots.flatMap(\.sessions).filter(\.hasWarmCache)
+    }
+
+    /// Number of warm-cache sessions not pinned yet, for the action labels.
+    var unpinnedWarmCacheSessionCount: Int {
+        warmCacheSessions.count { !sessionFocus.isPinned($0) }
+    }
+
+    /// Pins every session whose cache is still warm, so Priority-only mode
+    /// follows exactly the work that would benefit from a follow-up prompt.
+    /// Returns how many sessions were newly pinned.
+    @discardableResult
+    func pinWarmCacheSessions() -> Int {
+        sessionFocus.pinAll(warmCacheSessions)
+    }
+
     func setProvider(_ providerID: AgentProviderID, visible: Bool) {
         if visible {
             hiddenProviders.remove(providerID)

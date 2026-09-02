@@ -121,6 +121,40 @@ final class SessionFocusTests: XCTestCase {
         XCTAssertEqual(decoded, preferences)
     }
 
+    func testPinAllSkipsAlreadyPinnedAndUnpinAllClears() {
+        var preferences = SessionFocusPreferences()
+        let first = session("session-1", status: .working)
+        let second = session("session-2", status: .idle)
+        let remote = session("session-1", status: .working, host: remoteHost)
+        preferences.pin(first, now: now)
+
+        XCTAssertEqual(preferences.pinAll([first, second, remote], now: now), 2)
+        XCTAssertEqual(preferences.pinned.count, 3)
+        XCTAssertTrue(preferences.isPinned(remote))
+        XCTAssertEqual(preferences.pinAll([first, second], now: now), 0)
+
+        XCTAssertEqual(preferences.unpinAll(), 3)
+        XCTAssertTrue(preferences.pinned.isEmpty)
+        XCTAssertTrue(preferences.lastSeenAt.isEmpty)
+    }
+
+    func testWarmCacheSelectionMatchesWarmAndExpiringOnly() {
+        func session(_ temperature: CacheTemperature) -> AgentSession {
+            AgentSession(
+                id: temperature.rawValue,
+                providerID: .codex,
+                title: "s",
+                status: .idle,
+                lastActivityAt: now,
+                cache: CacheSnapshot(temperature: temperature)
+            )
+        }
+        let warm = [session(.warm), session(.expiring), session(.cold), session(.unknown)]
+            .filter(\.hasWarmCache)
+            .map(\.id)
+        XCTAssertEqual(warm, ["warm", "expiring"])
+    }
+
     private var remoteHost: AgentHost {
         AgentHost(id: "remote-1", displayName: "Build Server", kind: .ssh, sshDestination: "build")
     }

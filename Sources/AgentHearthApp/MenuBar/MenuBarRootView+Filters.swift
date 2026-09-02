@@ -162,15 +162,45 @@ extension MenuBarRootView {
 
     // Toggles the focus between all sessions and pinned ones only — both the
     // list and session notifications follow it. The star badge shows how many
-    // sessions are currently pinned.
+    // sessions are currently pinned. The dropdown half offers bulk pinning:
+    // every session whose cache is still warm, or clearing all pins.
     private var priorityFocusToggle: some View {
         let isPriorityOnly = model.sessionFocus.isPriorityOnly
         let pinnedCount = model.scopedPinnedSessionCount
+        let warmCount = model.unpinnedWarmCacheSessionCount
         // Inert without a pinned session in this scope — but never disabled
         // while active, so the mode can always be turned back off.
-        let isInert = !isPriorityOnly && pinnedCount == 0
-        return Button {
-            model.sessionFocus.setMode(isPriorityOnly ? .all : .priorityOnly)
+        let isInert = !isPriorityOnly && pinnedCount == 0 && warmCount == 0
+        return Menu {
+            Button {
+                model.pinWarmCacheSessions()
+            } label: {
+                Label(
+                    warmCount == 0
+                        ? "Pin all warm-cache sessions"
+                        : "Pin all warm-cache sessions (\(warmCount))",
+                    systemImage: "flame"
+                )
+            }
+            .keyboardShortcut("p", modifiers: [.command, .shift])
+            .disabled(warmCount == 0)
+
+            Button {
+                model.pinWarmCacheSessions()
+                model.sessionFocus.setMode(.priorityOnly)
+            } label: {
+                Label("Pin warm-cache sessions and focus on them", systemImage: "star.fill")
+            }
+            .disabled(warmCount == 0 && model.sessionFocus.pinnedCount == 0)
+
+            Divider()
+
+            Button(role: .destructive) {
+                model.sessionFocus.unpinAll()
+            } label: {
+                Label("Unpin all", systemImage: "star.slash")
+            }
+            .disabled(model.sessionFocus.pinnedCount == 0)
         } label: {
             HStack(spacing: 5) {
                 Image(systemName: isPriorityOnly ? "star.fill" : "star")
@@ -193,17 +223,20 @@ extension MenuBarRootView {
                 isPriorityOnly ? AnyShapeStyle(.yellow.opacity(0.16)) : AnyShapeStyle(.quaternary.opacity(0.5)),
                 in: Capsule()
             )
+        } primaryAction: {
+            model.sessionFocus.setMode(isPriorityOnly ? .all : .priorityOnly)
         }
-        .buttonStyle(.plain)
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.visible)
         .fixedSize()
         .disabled(isInert)
         .opacity(isInert ? 0.45 : 1)
         .help(
             isInert
-                ? "No priority sessions here — star a session to enable this filter"
+                ? "No priority sessions here — star a session, or pin every warm-cache session from the menu"
                 : isPriorityOnly
-                    ? "Showing and notifying priority sessions only. Click to include every session."
-                    : "Show and notify priority sessions only"
+                    ? "Showing and notifying priority sessions only. Click to include every session; open the menu to pin all warm-cache sessions (⇧⌘P)."
+                    : "Show and notify priority sessions only. Open the menu to pin all warm-cache sessions (⇧⌘P)."
         )
     }
 

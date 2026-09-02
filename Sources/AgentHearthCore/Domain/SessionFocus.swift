@@ -34,6 +34,14 @@ public struct PrioritySessionRef: Codable, Hashable, Sendable {
     }
 }
 
+public extension AgentSession {
+    /// Whether a follow-up prompt would still reuse this session's cache: the
+    /// "pin everything that is still warm" selection.
+    var hasWarmCache: Bool {
+        cache.temperature == .warm || cache.temperature == .expiring
+    }
+}
+
 /// Which sessions may raise session-scoped notifications. Usage-limit alerts
 /// are account-wide and are never narrowed by this mode.
 public enum NotificationFocusMode: String, Codable, Sendable {
@@ -111,6 +119,27 @@ public struct SessionFocusPreferences: Codable, Equatable, Sendable {
 
     public mutating func unpin(_ session: AgentSession) {
         unpin(PrioritySessionRef(session: session))
+    }
+
+    /// Pins every given session that is not pinned yet. Returns how many were
+    /// added, so the caller can report the outcome.
+    @discardableResult
+    public mutating func pinAll(_ sessions: [AgentSession], now: Date = .now) -> Int {
+        var added = 0
+        for session in sessions where !isPinned(session) {
+            pin(session, now: now)
+            added += 1
+        }
+        return added
+    }
+
+    /// Removes every pin. Returns how many were removed.
+    @discardableResult
+    public mutating func unpinAll() -> Int {
+        let count = pinned.count
+        pinned.removeAll()
+        lastSeenAt.removeAll()
+        return count
     }
 
     public mutating func togglePin(_ session: AgentSession, now: Date = .now) {

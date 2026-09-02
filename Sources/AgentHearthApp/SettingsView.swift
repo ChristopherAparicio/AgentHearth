@@ -52,7 +52,7 @@ private enum SettingsSection: CaseIterable {
         case .notifications:
             "Notifications alert macOS permission system settings banners sounds badges waiting approval stuck failed finished cache expiry usage limit night mode enable macOS notifications send test notification allow critical sounds silence ordinary agent finished open system settings"
         case .prioritySessions:
-            "Priority Sessions pinned pin star focus priority only promote prioritize new session notification unpin remove ask to prioritize show notify"
+            "Priority Sessions pinned pin star focus priority only promote prioritize new session notification unpin remove ask to prioritize show notify pin all warm cache sessions bulk shortcut"
         case .cacheExpiry:
             "Cache Expiry cache warning countdown notification scope provider project acknowledge ignore prompt cache close to expiry seconds"
         case .historyReports:

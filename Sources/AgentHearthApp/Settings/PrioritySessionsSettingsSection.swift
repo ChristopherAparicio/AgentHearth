@@ -25,6 +25,24 @@ struct PrioritySessionsSettingsSection: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
+            HStack {
+                Button {
+                    model.pinWarmCacheSessions()
+                } label: {
+                    Label(pinWarmLabel, systemImage: "flame")
+                }
+                .disabled(model.unpinnedWarmCacheSessionCount == 0)
+
+                Button("Unpin All", role: .destructive) {
+                    model.sessionFocus.unpinAll()
+                }
+                .disabled(model.sessionFocus.pinnedCount == 0)
+            }
+
+            Text("Pins every session, on every machine, whose prompt cache is still warm — the work a follow-up prompt would still reuse. Also available from the star menu in the menu bar (⇧⌘P).")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
             if model.sessionFocus.preferences.pinned.isEmpty {
                 Label("No priority session. Pin one with the star in the session list.", systemImage: "star")
                     .font(.caption)
@@ -39,6 +57,11 @@ struct PrioritySessionsSettingsSection: View {
                     .foregroundStyle(.secondary)
             }
         }
+    }
+
+    private var pinWarmLabel: String {
+        let count = model.unpinnedWarmCacheSessionCount
+        return count == 0 ? "Pin Warm-Cache Sessions" : "Pin Warm-Cache Sessions (\(count))"
     }
 
     // The service exposes explicit setters (its preferences value is

@@ -23,6 +23,8 @@ code to an AgentHearth service.
   weekly macOS reports.
 - Provider/machine-scoped cache-expiry countdowns with a configurable warning window.
 - Native macOS alerts for attention, completion, cache expiry, and usage limits.
+- Priority sessions: star sessions to focus notifications on them, or pin every
+  session whose cache is still warm in one action (star menu, ⇧⌘P, or Settings).
 - One-click session resume in Terminal from a card or notification.
 - Monitor sessions on SSH machines with the same provider cards and host badges.
 - Combine provider tabs with an `All machines / This Mac / SSH host` dropdown.
