@@ -12,7 +12,7 @@ code to an AgentHearth service.
 
 - One adaptive menu bar for OpenCode, Codex, and Claude Code.
 - A composable menu-bar label: add items (session counts, usage windows,
-  cache reuse, expiring caches) scoped to one provider or all, each with its
+  cache reuse, warm caches, expiring caches) scoped to one provider or all, each with its
   own color and prefix, with a live preview in Settings. The default is the
   flame alone.
 - Live session state with project and model context.
@@ -144,6 +144,33 @@ input to it and preserves its output. Claude exposes rate-limit fields only
 after the first API response in a session. The bundled bridge sends only
 whitelisted metadata to the loopback receiver; prompts, responses, tool
 arguments, and transcript contents are never posted.
+
+### Claude usage limits and the Keychain prompts
+
+**Settings → Claude Usage Limits → Fetch reset times from Anthropic** is off
+by default. When you turn it on, AgentHearth reads the OAuth token that Claude
+Code already stores in your login keychain (item `Claude Code-credentials`)
+and calls Anthropic's usage endpoint to get the exact 5-hour and 7-day reset
+times. The token is read once per launch, kept in memory, and read again only
+after it expires or rotates. It is never written, refreshed, or sent anywhere
+but `api.anthropic.com`.
+
+Because that item was created by Claude Code, macOS asks for your consent the
+first time, and you may see **two** dialogs in a row. That is expected:
+
+1. *AgentHearth wants to access the "login" keychain* — shown only while the
+   keychain is locked (for example after "Lock after N minutes of inactivity"
+   in Keychain Access). Unlocking the keychain does not by itself grant access
+   to the item, hence the second dialog.
+2. *AgentHearth wants to use your confidential information stored in
+   "Claude Code-credentials"* — the item's own access list. Choose
+   **Always Allow** to record the choice; AgentHearth is signed with a stable
+   Developer ID identity, so the choice survives reinstalls via `task install`.
+
+To stop the first dialog from coming back, open Keychain Access, right-click
+the *login* keychain, choose *Change Settings*, and disable automatic locking.
+Leaving the feature off avoids the Keychain entirely; usage windows then come
+from the Claude Code status line while a session is open.
 
 ## Alerts and session navigation
 

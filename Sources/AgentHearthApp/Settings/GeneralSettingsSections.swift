@@ -122,9 +122,20 @@ struct ClaudeUsageSettingsSection: View {
                     .font(.caption)
             }
 
-            Text("Off by default. When on, AgentHearth reads your existing Claude sign-in from the Keychain to fetch the 5h/7d reset times from Anthropic about every two hours — the only source that works without an open terminal session. It never stores or refreshes your token, and skips the call when the token is expired.")
+            Text("Off by default. When on, AgentHearth reads your existing Claude sign-in from the Keychain to fetch the 5h/7d reset times from Anthropic about every two hours — the only source that works without an open terminal session. The token is read once per launch and kept in memory; it is never stored, refreshed, or sent anywhere but api.anthropic.com.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+            if model.accountUsagePoller.isEnabled {
+                Label {
+                    Text("macOS asks for your consent the first time, sometimes with two dialogs in a row: one to unlock the login keychain (only while it is locked), then one for the “Claude Code-credentials” item itself. Choose Always Allow on the second one so it is not asked again.")
+                } icon: {
+                    Image(systemName: "key.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
         }
     }
 }

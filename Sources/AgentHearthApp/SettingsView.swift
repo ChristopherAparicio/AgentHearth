@@ -36,7 +36,7 @@ private enum SettingsSection: CaseIterable {
         case .openingSessions:
             "Opening Sessions open resume terminal application app notification Codex Claude Code OpenCode remote SSH"
         case .claudeUsage:
-            "Claude usage limits reset five hour seven day account Anthropic token keychain fetch reset times"
+            "Claude usage limits reset five hour seven day account Anthropic token keychain fetch reset times always allow dialog prompt password consent"
         case .dataSources:
             "Data Sources source automatic local realtime \(Self.providerNames)"
         case .remoteHosts:
