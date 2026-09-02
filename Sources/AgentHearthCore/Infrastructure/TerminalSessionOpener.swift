@@ -263,6 +263,13 @@ public actor TerminalSessionOpener: SessionOpening {
         try openInTerminal(target)
     }
 
+    /// Runs the provider CLI with no arguments in a new Terminal tab. Used to
+    /// let Claude Code refresh an expired OAuth token, which it does on launch.
+    public func openProviderCLI(_ providerID: AgentProviderID) async throws {
+        let executable = try executableURL(for: providerID)
+        try launchAppleScript(Self.terminalRunScript, arguments: ["exec \(Shell.quoted(executable.path))"])
+    }
+
     private func openInProviderApp(_ target: SessionTarget) throws {
         let claudeDesktopSessionID = target.providerID == .claudeCode
             ? claudeDesktopSessionResolver.localSessionID(for: target.sessionID)

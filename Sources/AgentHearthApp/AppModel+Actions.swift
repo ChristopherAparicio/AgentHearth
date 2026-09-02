@@ -90,6 +90,32 @@ extension AppModel {
         sessionFocus.pinAll(warmCacheSessions.filter { $0.providerID == providerID })
     }
 
+    /// Whether the Claude usage windows lack reset times because the account
+    /// fetch has no usable sign-in: the case the "refresh sign-in" action fixes.
+    var claudeUsageNeedsSignInRefresh: Bool {
+        accountUsagePoller.isEnabled && accountUsagePoller.needsSignInRefresh
+    }
+
+    /// Opens Claude Code in Terminal — it refreshes its OAuth token on launch —
+    /// and schedules a prompt re-fetch of the account usage.
+    func refreshClaudeSignIn() {
+        sessionOpeningError = nil
+        accountUsagePoller.expectSignInRefresh()
+        Task {
+            do {
+                try await sessionOpener.openProviderCLI(.claudeCode)
+            } catch {
+                sessionOpeningError = error.localizedDescription
+            }
+        }
+    }
+
+    /// Re-fetches the Claude account usage right away, ignoring the backoff.
+    func retryClaudeUsageFetch() {
+        accountUsagePoller.retryNow()
+        Task { await refresh() }
+    }
+
     func setProvider(_ providerID: AgentProviderID, visible: Bool) {
         if visible {
             hiddenProviders.remove(providerID)

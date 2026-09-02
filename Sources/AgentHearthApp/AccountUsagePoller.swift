@@ -31,7 +31,24 @@ final class AccountUsagePoller {
         }
     }
     var status: String?
+    /// True after the last fetch found no usable token: the user has to run
+    /// Claude Code once so it refreshes its sign-in.
+    private(set) var needsSignInRefresh = false
     private var nextFetchAt: Date = .distantPast
+
+    /// Forgets the backoff so the next refresh fetches immediately.
+    func retryNow() {
+        guard isEnabled else { return }
+        nextFetchAt = .distantPast
+    }
+
+    /// After the user launched Claude Code to refresh its token: give it a
+    /// moment to sign in, then fetch again without waiting out the backoff.
+    func expectSignInRefresh() {
+        guard isEnabled else { return }
+        nextFetchAt = Date().addingTimeInterval(20)
+        status = "Waiting for Claude Code to refresh its sign-in…"
+    }
 
     init(fetcher: any AccountUsageFetching, preferences: PreferencesStore) {
         self.fetcher = fetcher
@@ -54,7 +71,12 @@ final class AccountUsagePoller {
     /// with reset timestamps — into the Claude connector.
     func refreshIfNeeded() async {
         guard isEnabled, Date() >= nextFetchAt else { return }
-        switch await fetcher.fetch() {
+        let outcome = await fetcher.fetch()
+        switch outcome {
+        case .tokenExpired, .tokenMissing: needsSignInRefresh = true
+        case .usage, .failed: needsSignInRefresh = false
+        }
+        switch outcome {
         case let .usage(usage):
             await ingest(usage)
             status = "Updated \(usage.fetchedAt.formatted(date: .omitted, time: .shortened))"
@@ -70,10 +92,10 @@ final class AccountUsagePoller {
             let candidate = soonestReset.map { $0.addingTimeInterval(60) } ?? twoHours
             nextFetchAt = max(now.addingTimeInterval(5 * 60), min(twoHours, candidate))
         case .tokenExpired:
-            status = "Token expired — use Claude Desktop to refresh it, then retry"
+            status = "Claude sign-in expired — run Claude Code once to refresh it"
             nextFetchAt = Date().addingTimeInterval(10 * 60)
         case .tokenMissing:
-            status = "No Claude credentials found in the Keychain"
+            status = "No Claude sign-in found in the Keychain — run Claude Code and sign in"
             nextFetchAt = Date().addingTimeInterval(30 * 60)
         case let .failed(message):
             status = "Couldn't fetch usage: \(message)"

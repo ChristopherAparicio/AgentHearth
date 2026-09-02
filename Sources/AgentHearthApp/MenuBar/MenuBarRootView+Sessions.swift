@@ -134,6 +134,13 @@ extension MenuBarRootView {
             isPinned: model.sessionFocus.isPinned,
             onTogglePin: { model.sessionFocus.togglePin($0) },
             onPinWarmCacheSessions: { model.pinWarmCacheSessions(for: snapshot.id) },
+            usageHint: snapshot.id == .claudeCode && model.claudeUsageNeedsSignInRefresh
+                ? UsageHint(
+                    text: "Reset times need a fresh Claude sign-in",
+                    actionTitle: "Open Claude Code",
+                    action: { model.refreshClaudeSignIn() }
+                )
+                : nil,
             usageResetDisplay: model.usageResetDisplay,
             showsCacheIcon: model.showsSessionCacheIcon,
             showsCacheCountdown: model.showsSessionCacheCountdown,

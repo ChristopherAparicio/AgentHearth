@@ -1,6 +1,12 @@
 import AgentHearthCore
 import SwiftUI
 
+struct UsageHint {
+    let text: String
+    let actionTitle: String
+    let action: () -> Void
+}
+
 struct ProviderCardView: View {
     let snapshot: ProviderSnapshot
     let onOpenSession: (SessionTarget) -> Void
@@ -16,6 +22,9 @@ struct ProviderCardView: View {
     var onTogglePin: ((AgentSession) -> Void)?
     /// Header action: pin every warm-cache session of this provider at once.
     var onPinWarmCacheSessions: (() -> Void)?
+    /// A one-line note under the usage bars with an inline action, e.g. the
+    /// Claude sign-in refresh that brings the reset times back.
+    var usageHint: UsageHint?
     var usageResetDisplay: UsageResetDisplay = .countdown
     let showsCacheIcon: Bool
     let showsCacheCountdown: Bool
@@ -56,7 +65,17 @@ struct ProviderCardView: View {
                         ForEach(snapshot.usageWindows) { window in
                             usageRow(window, now: context.date)
                         }
-                        usageMeasuredNote(now: context.date)
+                        if let usageHint {
+                            HStack(spacing: 6) {
+                                Label(usageHint.text, systemImage: "exclamationmark.triangle")
+                                    .foregroundStyle(.orange)
+                                Button(usageHint.actionTitle, action: usageHint.action)
+                                    .buttonStyle(.link)
+                            }
+                            .font(.caption2)
+                        } else {
+                            usageMeasuredNote(now: context.date)
+                        }
                     }
                 }
             }

@@ -136,6 +136,26 @@ struct ClaudeUsageSettingsSection: View {
                     .font(.caption)
             }
 
+            if model.accountUsagePoller.isEnabled {
+                HStack {
+                    Button {
+                        model.refreshClaudeSignIn()
+                    } label: {
+                        Label("Open Claude Code to Refresh Sign-in", systemImage: "terminal")
+                    }
+                    .help("Runs `claude` in Terminal; Claude Code refreshes its token on launch, then usage is fetched again")
+
+                    Button("Retry Now") {
+                        model.retryClaudeUsageFetch()
+                    }
+                }
+                if model.claudeUsageNeedsSignInRefresh {
+                    Label("Reset times are missing until the sign-in is refreshed.", systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+            }
+
             Text("Off by default. When on, AgentHearth reads your existing Claude sign-in from the Keychain to fetch the 5h/7d reset times from Anthropic about every two hours — the only source that works without an open terminal session. The token is read once per launch and kept in memory; it is never stored, refreshed, or sent anywhere but api.anthropic.com.")
                 .font(.caption)
                 .foregroundStyle(.secondary)

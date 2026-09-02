@@ -21,4 +21,18 @@ public protocol AccountUsageIngesting: Sendable {
 
 public protocol SessionOpening: Sendable {
     func open(_ target: SessionTarget, destination: SessionOpenDestination) async throws
+    /// Starts the provider's CLI in a fresh terminal with no session to resume,
+    /// e.g. so Claude Code refreshes its sign-in on launch.
+    func openProviderCLI(_ providerID: AgentProviderID) async throws
+}
+
+public extension SessionOpening {
+    func openProviderCLI(_ providerID: AgentProviderID) async throws {
+        throw SessionOpeningUnsupportedError(providerID: providerID)
+    }
+}
+
+public struct SessionOpeningUnsupportedError: LocalizedError {
+    public let providerID: AgentProviderID
+    public var errorDescription: String? { "Launching \(providerID.rawValue) is not supported here" }
 }
