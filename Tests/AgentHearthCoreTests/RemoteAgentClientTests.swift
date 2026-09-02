@@ -230,6 +230,7 @@ final class RemoteAgentClientTests: XCTestCase {
     func testConcurrentFailuresCountAsOneBackoffStep() async {
         let clock = MutableClock(Date(timeIntervalSince1970: 10_000))
         let runner = FailingSSHRunner()
+        runner.delayNanoseconds = 50_000_000
         let client = RemoteAgentClient(
             configuration: RemoteHostConfiguration(id: "rtx", displayName: "RTX", sshDestination: "rtx-server"),
             runner: runner,
@@ -278,6 +279,9 @@ private func XCTAssertThrowsErrorAsync<T>(
 private final class FailingSSHRunner: SSHCommandRunning, @unchecked Sendable {
     private(set) var commandCount = 0
     var shouldFail = true
+    /// Suspends before answering so several callers are genuinely in flight
+    /// at once, the way real ssh processes are.
+    var delayNanoseconds: UInt64 = 0
 
     func run(
         destination: String,
@@ -285,6 +289,9 @@ private final class FailingSSHRunner: SSHCommandRunning, @unchecked Sendable {
         standardInput: Data?
     ) async throws -> SSHCommandResult {
         commandCount += 1
+        if delayNanoseconds > 0 {
+            try? await Task.sleep(nanoseconds: delayNanoseconds)
+        }
         if shouldFail {
             throw SSHCommandError.commandFailed(destination: destination, message: "ssh: connection refused")
         }
