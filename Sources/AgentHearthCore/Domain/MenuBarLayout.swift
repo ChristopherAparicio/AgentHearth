@@ -18,6 +18,9 @@ public enum MenuBarMetric: Codable, Equatable, Hashable, Sendable {
     case cacheReuse
     /// Number of caches in scope that expire within the warning lead time.
     case expiringCaches
+    /// Number of sessions in scope whose prompt cache is still warm (or
+    /// expiring), i.e. a follow-up prompt would still reuse it.
+    case warmCaches
 }
 
 /// Which providers an item looks at.
@@ -215,6 +218,12 @@ public enum MenuBarLayoutRenderer {
                       let remaining = session.cache.remainingSeconds
                 else { return false }
                 return remaining > 0 && remaining <= cacheWarningSeconds
+            }
+            return Value(text: "\(count)", isZero: count == 0)
+
+        case .warmCaches:
+            let count = sessions.count { session in
+                session.cache.temperature == .warm || session.cache.temperature == .expiring
             }
             return Value(text: "\(count)", isZero: count == 0)
         }

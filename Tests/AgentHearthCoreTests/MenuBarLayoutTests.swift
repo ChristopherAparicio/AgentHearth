@@ -55,12 +55,15 @@ final class MenuBarLayoutTests: XCTestCase {
         let layout = MenuBarLayout(items: [
             MenuBarItem(metric: .cacheReuse, scope: .provider(.codex)),
             MenuBarItem(metric: .expiringCaches),
+            MenuBarItem(metric: .warmCaches),
+            MenuBarItem(metric: .warmCaches, scope: .provider(.claudeCode)),
             MenuBarItem(metric: .cacheReuse, scope: .provider(.openCode)),
         ])
         let rendered = MenuBarLayoutRenderer.render(layout, snapshots: snapshots, cacheWarningSeconds: 300)
-        // Codex sessions report 0.9 and 0.5 reuse; one warm cache has 120 s left.
-        // OpenCode has no session, so its reuse item is skipped.
-        XCTAssertEqual(rendered.map(\.text), ["70%", "1"])
+        // Codex sessions report 0.9 and 0.5 reuse; both caches are warm and one
+        // has 120 s left. Claude sessions have no cache reading. OpenCode has
+        // no session, so its reuse item is skipped.
+        XCTAssertEqual(rendered.map(\.text), ["70%", "1", "2", "0"])
     }
 
     func testPrefixesResolveAgainstTheScope() {

@@ -104,6 +104,7 @@ enum MenuBarMetricKind: String, CaseIterable, Identifiable {
     case sessionCount
     case usageWindow
     case cacheReuse
+    case warmCaches
     case expiringCaches
 
     var id: String { rawValue }
@@ -113,6 +114,7 @@ enum MenuBarMetricKind: String, CaseIterable, Identifiable {
         case .sessionCount: "Session count"
         case .usageWindow: "Usage window"
         case .cacheReuse: "Cache reuse"
+        case .warmCaches: "Warm caches"
         case .expiringCaches: "Expiring caches"
         }
     }
@@ -122,6 +124,7 @@ enum MenuBarMetricKind: String, CaseIterable, Identifiable {
         case .sessionCount: .sessionCount(.all)
         case .usageWindow: .usageWindow(windowID: nil)
         case .cacheReuse: .cacheReuse
+        case .warmCaches: .warmCaches
         case .expiringCaches: .expiringCaches
         }
     }
@@ -131,6 +134,7 @@ enum MenuBarMetricKind: String, CaseIterable, Identifiable {
         case .sessionCount: self = .sessionCount
         case .usageWindow: self = .usageWindow
         case .cacheReuse: self = .cacheReuse
+        case .warmCaches: self = .warmCaches
         case .expiringCaches: self = .expiringCaches
         }
     }
