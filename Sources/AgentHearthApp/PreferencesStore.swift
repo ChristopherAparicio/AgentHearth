@@ -182,6 +182,13 @@ final class PreferencesStore {
         set { defaults.set(newValue, forKey: PreferenceKey.claudeAccountUsageEnabled) }
     }
 
+    /// Show Anthropic's per-model weekly limits (e.g. "7 days · Fable") next
+    /// to the global windows. On by default: they are usually the binding limit.
+    var showsClaudeScopedWeeklyLimits: Bool {
+        get { defaults.object(forKey: PreferenceKey.showsClaudeScopedWeeklyLimits) as? Bool ?? true }
+        set { defaults.set(newValue, forKey: PreferenceKey.showsClaudeScopedWeeklyLimits) }
+    }
+
     var historyEnabled: Bool {
         get { defaults.object(forKey: PreferenceKey.historyEnabled) as? Bool ?? true }
         set { defaults.set(newValue, forKey: PreferenceKey.historyEnabled) }
@@ -323,6 +330,7 @@ private enum PreferenceKey {
     static let showsCompactSessionRows = "showsCompactSessionRows"
     static let usageResetDisplay = "usageResetDisplay"
     static let claudeAccountUsageEnabled = "claudeAccountUsageEnabled"
+    static let showsClaudeScopedWeeklyLimits = "showsClaudeScopedWeeklyLimits"
     static let smartSleepExpiresAt = "smartSleepExpiresAt"
     static let remoteHosts = "remoteHosts"
     static let openCodeServers = "openCodeServers"

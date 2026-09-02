@@ -35,6 +35,29 @@ final class AccountUsagePoller {
     /// Claude Code once so it refreshes its sign-in.
     private(set) var needsSignInRefresh = false
     private var nextFetchAt: Date = .distantPast
+    /// The last successful fetch, kept so toggling the scoped-limits
+    /// preference re-applies immediately without another network call.
+    private var lastUsage: AccountUsage?
+
+    /// Whether per-model weekly limits are passed on to the connector.
+    var showsScopedWeeklyLimits: Bool {
+        didSet {
+            guard showsScopedWeeklyLimits != oldValue else { return }
+            preferences.showsClaudeScopedWeeklyLimits = showsScopedWeeklyLimits
+            if let lastUsage, isEnabled {
+                Task { await ingest(applyingPreferences(to: lastUsage)) }
+            }
+        }
+    }
+
+    /// Names of the per-model limits in the last fetch, for the Settings caption.
+    var scopedWeeklyLimitLabels: [String] {
+        lastUsage?.scopedWeekly.map(\.label) ?? []
+    }
+
+    private func applyingPreferences(to usage: AccountUsage) -> AccountUsage {
+        showsScopedWeeklyLimits ? usage : usage.withoutScopedWeekly()
+    }
 
     /// Forgets the backoff so the next refresh fetches immediately.
     func retryNow() {
@@ -54,6 +77,7 @@ final class AccountUsagePoller {
         self.fetcher = fetcher
         self.preferences = preferences
         self.isEnabled = preferences.claudeAccountUsageEnabled
+        self.showsScopedWeeklyLimits = preferences.showsClaudeScopedWeeklyLimits
     }
 
     func setEnabled(_ enabled: Bool) {
@@ -62,6 +86,7 @@ final class AccountUsagePoller {
             nextFetchAt = .distantPast // fetch on the next refresh
         } else {
             status = nil
+            lastUsage = nil
             Task { await ingest(nil) }
         }
     }
@@ -78,7 +103,8 @@ final class AccountUsagePoller {
         }
         switch outcome {
         case let .usage(usage):
-            await ingest(usage)
+            lastUsage = usage
+            await ingest(applyingPreferences(to: usage))
             status = "Updated \(usage.fetchedAt.formatted(date: .omitted, time: .shortened))"
             // Re-fetch shortly after the soonest window resets (the 5h can lapse
             // between two-hour polls), but never sooner than 5 min nor later

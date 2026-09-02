@@ -27,6 +27,37 @@ final class ClaudeAccountUsageTests: XCTestCase {
         XCTAssertEqual(fiveReset.timeIntervalSince1970, expected.timeIntervalSince1970, accuracy: 1)
     }
 
+    /// The `limits` array carries per-model weekly limits; only `weekly_scoped`
+    /// entries with a model name become scoped windows, deduplicated by name.
+    func testDecodesPerModelWeeklyLimits() throws {
+        let body = """
+        {
+          "five_hour": {"utilization": 25.0, "resets_at": "2026-09-02T18:00:00.263421+00:00"},
+          "seven_day": {"utilization": 35.0, "resets_at": "2026-09-05T22:00:00.263440+00:00"},
+          "limits": [
+            {"kind": "session", "group": "session", "percent": 25, "resets_at": "2026-09-02T18:00:00.263421+00:00", "scope": null, "is_active": false},
+            {"kind": "weekly_all", "group": "weekly", "percent": 35, "resets_at": "2026-09-05T22:00:00.263440+00:00", "scope": null, "is_active": false},
+            {"kind": "weekly_scoped", "group": "weekly", "percent": 56, "resets_at": "2026-09-05T22:00:00.263659+00:00", "scope": {"model": {"id": null, "display_name": "Fable"}, "surface": null}, "is_active": true},
+            {"kind": "weekly_scoped", "group": "weekly", "percent": 12, "resets_at": null, "scope": {"model": {"id": null, "display_name": "Opus 5"}}, "is_active": false},
+            {"kind": "weekly_scoped", "group": "weekly", "percent": 99, "scope": {"model": {"display_name": "Fable"}}},
+            {"kind": "weekly_scoped", "group": "weekly", "percent": 40, "scope": {"surface": "cowork"}},
+            {"kind": "mystery_future_kind", "percent": 1}
+          ]
+        }
+        """
+        let usage = try XCTUnwrap(ClaudeAccountUsageDecoder.decode(Data(body.utf8), fetchedAt: .now))
+
+        XCTAssertEqual(usage.scopedWeekly.map(\.id), ["fable", "opus-5"])
+        XCTAssertEqual(usage.scopedWeekly.map(\.label), ["Fable", "Opus 5"])
+        XCTAssertEqual(usage.scopedWeekly[0].window.utilizationFraction, 0.56, accuracy: 0.0001)
+        XCTAssertTrue(usage.scopedWeekly[0].isActive)
+        XCTAssertNotNil(usage.scopedWeekly[0].window.resetsAt)
+        XCTAssertFalse(usage.scopedWeekly[1].isActive)
+        XCTAssertNil(usage.scopedWeekly[1].window.resetsAt)
+        XCTAssertTrue(usage.withoutScopedWeekly().scopedWeekly.isEmpty)
+        XCTAssertEqual(usage.withoutScopedWeekly().sevenDay, usage.sevenDay)
+    }
+
     func testReturnsNilWhenNoWindowsPresent() {
         let empty = #"{"seven_day_opus": null, "extra_usage": {"is_enabled": false}}"#
         XCTAssertNil(ClaudeAccountUsageDecoder.decode(Data(empty.utf8), fetchedAt: .now))

@@ -185,10 +185,19 @@ public actor ClaudeCodeConnector: ProviderConnector, AccountUsageIngesting {
             }
         }
 
-        let ordered: [(id: String, label: String)] = [
+        // Per-model weekly limits come only from the account endpoint; they
+        // follow the two global windows, in the order the API lists them.
+        var ordered: [(id: String, label: String)] = [
             ("claude-5h", "5 hours"),
             ("claude-7d", "7 days"),
         ]
+        if let account = freshAccountUsage() {
+            for scoped in account.scopedWeekly {
+                let id = "claude-7d-\(scoped.id)"
+                add(id, scoped.window.utilizationFraction, account.fetchedAt, scoped.window.resetsAt)
+                ordered.append((id, "7 days · \(scoped.label)"))
+            }
+        }
         return ordered.compactMap { meta in
             guard let contributions = byID[meta.id],
                   let freshest = contributions.max(by: { $0.measuredAt < $1.measuredAt })

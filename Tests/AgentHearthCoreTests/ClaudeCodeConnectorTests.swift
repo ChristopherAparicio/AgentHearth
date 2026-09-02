@@ -304,6 +304,42 @@ final class ClaudeCodeConnectorTests: XCTestCase {
         XCTAssertEqual(snapshot.usageWindows.last?.resetsAt, Date(timeIntervalSince1970: 9_000))
     }
 
+    /// Per-model weekly limits from the account endpoint become extra windows
+    /// after the two global ones, with a stable id the menu bar can pin.
+    func testScopedWeeklyLimitsFollowTheGlobalWindows() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let connector = ClaudeCodeConnector(
+            projectsURL: root,
+            planUsageHistoryURL: root.appending(path: "missing.json"),
+            now: { Date(timeIntervalSince1970: 2_000) }
+        )
+        await connector.ingestAccountUsage(AccountUsage(
+            fiveHour: .init(utilizationFraction: 0.25, resetsAt: Date(timeIntervalSince1970: 5_000)),
+            sevenDay: .init(utilizationFraction: 0.35, resetsAt: Date(timeIntervalSince1970: 9_000)),
+            scopedWeekly: [
+                .init(id: "fable", label: "Fable", window: .init(utilizationFraction: 0.56, resetsAt: Date(timeIntervalSince1970: 9_100)), isActive: true),
+            ],
+            fetchedAt: Date(timeIntervalSince1970: 1_800)
+        ))
+        let snapshot = try await connector.snapshot()
+
+        XCTAssertEqual(snapshot.usageWindows.map(\.id), ["claude-5h", "claude-7d", "claude-7d-fable"])
+        XCTAssertEqual(snapshot.usageWindows.last?.label, "7 days · Fable")
+        XCTAssertEqual(snapshot.usageWindows.last?.usedFraction ?? 0, 0.56, accuracy: 0.0001)
+        XCTAssertEqual(snapshot.usageWindows.last?.resetsAt, Date(timeIntervalSince1970: 9_100))
+
+        // The user preference strips them before ingestion.
+        await connector.ingestAccountUsage(AccountUsage(
+            fiveHour: .init(utilizationFraction: 0.25, resetsAt: nil),
+            sevenDay: .init(utilizationFraction: 0.35, resetsAt: nil),
+            scopedWeekly: [.init(id: "fable", label: "Fable", window: .init(utilizationFraction: 0.56, resetsAt: nil), isActive: true)],
+            fetchedAt: Date(timeIntervalSince1970: 1_800)
+        ).withoutScopedWeekly())
+        let stripped = try await connector.snapshot()
+        XCTAssertEqual(stripped.usageWindows.map(\.id), ["claude-5h", "claude-7d"])
+    }
+
     func testStaleAccountUsageIsIgnored() async throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }

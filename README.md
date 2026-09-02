@@ -155,7 +155,9 @@ Code already stores in your login keychain (items named `Claude Code-credentials
 plain or suffixed with a profile id as Claude Code 2.1 does; the freshest
 usable token wins, with `~/.claude/.credentials.json` as a last resort)
 and calls Anthropic's usage endpoint to get the exact 5-hour and 7-day reset
-times. The token is read once per launch, kept in memory, and read again only
+times, plus Anthropic's per-model weekly limits (shown as "7 days · Fable"-style
+bars, often the binding one; toggle them in the same section). The token is
+read once per launch, kept in memory, and read again only
 after it expires or rotates. It is never written, refreshed, or sent anywhere
 but `api.anthropic.com`.
 
