@@ -15,6 +15,13 @@ public struct ClaudeAccountUsageFetcher: Sendable {
 
     let now: @Sendable () -> Date
     let session: URLSession
+    /// Every Keychain read of another app's item can raise a macOS access
+    /// prompt (unless the user chose "Always Allow"). The token is therefore
+    /// kept in memory for the life of the process and the Keychain is only
+    /// consulted again once the token is known to be expired or rejected —
+    /// at most one prompt per launch plus one per token refresh, instead of
+    /// one per poll.
+    private let credentialCache = CredentialCache()
 
     public init(now: @escaping @Sendable () -> Date = Date.init, session: URLSession = .shared) {
         self.now = now
@@ -22,9 +29,29 @@ public struct ClaudeAccountUsageFetcher: Sendable {
     }
 
     public func fetch() async -> AccountUsageFetchOutcome {
-        guard let credentials = readCredentials() else { return .tokenMissing }
-        if let expiresAt = credentials.expiresAt, expiresAt <= now() { return .tokenExpired }
-        return await fetchUsage(accessToken: credentials.accessToken)
+        let credentials: Credentials
+        if let cached = await credentialCache.current, !isExpired(cached) {
+            credentials = cached
+        } else {
+            await credentialCache.clear()
+            guard let fresh = readCredentials() else { return .tokenMissing }
+            credentials = fresh
+            await credentialCache.store(fresh)
+        }
+        if isExpired(credentials) {
+            await credentialCache.clear()
+            return .tokenExpired
+        }
+        let outcome = await fetchUsage(accessToken: credentials.accessToken)
+        if case .tokenExpired = outcome {
+            // Claude Code rotated the token: re-read the Keychain next time.
+            await credentialCache.clear()
+        }
+        return outcome
+    }
+
+    private func isExpired(_ credentials: Credentials) -> Bool {
+        credentials.expiresAt.map { $0 <= now() } ?? false
     }
 
     /// The network half, split out from Keychain reading so tests can exercise
@@ -51,7 +78,7 @@ public struct ClaudeAccountUsageFetcher: Sendable {
         }
     }
 
-    private struct Credentials {
+    fileprivate struct Credentials: Sendable {
         let accessToken: String
         let expiresAt: Date?
     }
@@ -73,5 +100,18 @@ public struct ClaudeAccountUsageFetcher: Sendable {
         // expiresAt is epoch milliseconds when present.
         let expiresAt = (oauth["expiresAt"] as? Double).map { Date(timeIntervalSince1970: $0 / 1_000) }
         return Credentials(accessToken: token, expiresAt: expiresAt)
+    }
+}
+
+/// Process-lifetime holder for the last Keychain read (see `fetch()`).
+private actor CredentialCache {
+    private(set) var current: ClaudeAccountUsageFetcher.Credentials?
+
+    func store(_ credentials: ClaudeAccountUsageFetcher.Credentials) {
+        current = credentials
+    }
+
+    func clear() {
+        current = nil
     }
 }
