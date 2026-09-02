@@ -82,14 +82,21 @@ final class AccountUsagePoller {
             status = "Updated \(usage.fetchedAt.formatted(date: .omitted, time: .shortened))"
             // Re-fetch shortly after the soonest window resets (the 5h can lapse
             // between two-hour polls), but never sooner than 5 min nor later
-            // than 2 h.
+            // than 2 h. A window that already lapsed, or that Anthropic reports
+            // without a reset (a 5h window with no usage yet reports
+            // `resets_at: null`), is re-polled at the 5 min floor so the reset
+            // shows up as soon as the window is in use instead of up to two
+            // hours later.
             let now = Date()
-            let soonestReset = [usage.fiveHour?.resetsAt, usage.sevenDay?.resetsAt]
-                .compactMap { $0 }
-                .filter { $0 > now }
-                .min()
+            let windows = [usage.fiveHour, usage.sevenDay].compactMap { $0 }
+            let soonestReset = windows.compactMap(\.resetsAt).filter { $0 > now }.min()
+            let hasLapsedOrUnknownReset = windows.contains { window in
+                window.resetsAt.map { $0 <= now } ?? true
+            }
             let twoHours = now.addingTimeInterval(2 * 60 * 60)
-            let candidate = soonestReset.map { $0.addingTimeInterval(60) } ?? twoHours
+            let candidate = hasLapsedOrUnknownReset
+                ? now
+                : soonestReset.map { $0.addingTimeInterval(60) } ?? twoHours
             nextFetchAt = max(now.addingTimeInterval(5 * 60), min(twoHours, candidate))
         case .tokenExpired:
             status = "Claude sign-in expired — run Claude Code once to refresh it"
