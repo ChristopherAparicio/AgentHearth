@@ -46,6 +46,21 @@ extension AgentProviderID {
     }
 }
 
+/// How a usage window's reset is shown on the provider card.
+enum UsageResetDisplay: String, CaseIterable, Identifiable {
+    case countdown
+    case dateTime
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .countdown: "Countdown"
+        case .dateTime: "Date and time"
+        }
+    }
+}
+
 enum CacheReuseDisplayMode: String, CaseIterable, Identifiable {
     case sessionGlobal
     case lastTurn

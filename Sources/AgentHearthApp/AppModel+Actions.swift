@@ -84,6 +84,12 @@ extension AppModel {
         sessionFocus.pinAll(warmCacheSessions)
     }
 
+    /// Same, narrowed to one provider (the card-header action).
+    @discardableResult
+    func pinWarmCacheSessions(for providerID: AgentProviderID) -> Int {
+        sessionFocus.pinAll(warmCacheSessions.filter { $0.providerID == providerID })
+    }
+
     func setProvider(_ providerID: AgentProviderID, visible: Bool) {
         if visible {
             hiddenProviders.remove(providerID)

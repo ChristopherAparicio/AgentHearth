@@ -158,6 +158,12 @@ final class AppModel {
             preferences.showsCompactSessionRows = showsCompactSessionRows
         }
     }
+    var usageResetDisplay: UsageResetDisplay {
+        didSet {
+            guard usageResetDisplay != oldValue else { return }
+            preferences.usageResetDisplay = usageResetDisplay
+        }
+    }
     var historyEnabled: Bool {
         didSet {
             guard historyEnabled != oldValue else { return }
@@ -301,6 +307,7 @@ final class AppModel {
         self.showsSessionCacheHits = preferences.showsSessionCacheHits
         self.cacheReuseDisplayMode = preferences.cacheReuseDisplayMode
         self.showsCompactSessionRows = preferences.showsCompactSessionRows
+        self.usageResetDisplay = preferences.usageResetDisplay
         self.historyEnabled = preferences.historyEnabled
         self.historyRetention = preferences.historyRetention
         self.historyRangeDays = preferences.historyRangeDays

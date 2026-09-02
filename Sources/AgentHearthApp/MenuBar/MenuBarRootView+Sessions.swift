@@ -133,6 +133,8 @@ extension MenuBarRootView {
             onClearSessionRule: model.alertRules.clearCacheNotificationRule,
             isPinned: model.sessionFocus.isPinned,
             onTogglePin: { model.sessionFocus.togglePin($0) },
+            onPinWarmCacheSessions: { model.pinWarmCacheSessions(for: snapshot.id) },
+            usageResetDisplay: model.usageResetDisplay,
             showsCacheIcon: model.showsSessionCacheIcon,
             showsCacheCountdown: model.showsSessionCacheCountdown,
             showsCacheHits: model.showsSessionCacheHits,

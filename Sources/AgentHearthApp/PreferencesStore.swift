@@ -169,6 +169,14 @@ final class PreferencesStore {
         set { defaults.set(newValue, forKey: PreferenceKey.showsCompactSessionRows) }
     }
 
+    var usageResetDisplay: UsageResetDisplay {
+        get {
+            defaults.string(forKey: PreferenceKey.usageResetDisplay)
+                .flatMap(UsageResetDisplay.init(rawValue:)) ?? .countdown
+        }
+        set { defaults.set(newValue.rawValue, forKey: PreferenceKey.usageResetDisplay) }
+    }
+
     var claudeAccountUsageEnabled: Bool {
         get { defaults.object(forKey: PreferenceKey.claudeAccountUsageEnabled) as? Bool ?? false }
         set { defaults.set(newValue, forKey: PreferenceKey.claudeAccountUsageEnabled) }
@@ -313,6 +321,7 @@ private enum PreferenceKey {
     static let showsSessionCacheHits = "showsSessionCacheHits"
     static let cacheReuseDisplayMode = "cacheReuseDisplayMode"
     static let showsCompactSessionRows = "showsCompactSessionRows"
+    static let usageResetDisplay = "usageResetDisplay"
     static let claudeAccountUsageEnabled = "claudeAccountUsageEnabled"
     static let smartSleepExpiresAt = "smartSleepExpiresAt"
     static let remoteHosts = "remoteHosts"

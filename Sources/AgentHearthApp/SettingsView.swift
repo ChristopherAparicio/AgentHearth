@@ -26,7 +26,7 @@ private enum SettingsSection: CaseIterable {
     var searchTerms: String {
         switch self {
         case .providers:
-            "Providers provider visibility unavailable agent \(Self.providerNames)"
+            "Providers provider visibility unavailable agent usage reset countdown date time clock window \(Self.providerNames)"
         case .menuBar:
             "Menu Bar icon badge percentage usage window cache reuse counts display flame show next to the icon session counts icon only items color prefix preview expiring caches add item Codex Claude OpenCode"
         case .sessionList:

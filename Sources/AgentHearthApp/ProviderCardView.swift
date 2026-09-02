@@ -14,6 +14,9 @@ struct ProviderCardView: View {
     let onClearSessionRule: (AgentSession) -> Void
     var isPinned: (AgentSession) -> Bool = { _ in false }
     var onTogglePin: ((AgentSession) -> Void)?
+    /// Header action: pin every warm-cache session of this provider at once.
+    var onPinWarmCacheSessions: (() -> Void)?
+    var usageResetDisplay: UsageResetDisplay = .countdown
     let showsCacheIcon: Bool
     let showsCacheCountdown: Bool
     let showsCacheHits: Bool
@@ -35,6 +38,10 @@ struct ProviderCardView: View {
     }
 
     private var showsUsageWindows: Bool { content != .prioritySessions }
+
+    private var unpinnedWarmCacheCount: Int {
+        snapshot.sessions.count { $0.hasWarmCache && !isPinned($0) }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -127,6 +134,29 @@ struct ProviderCardView: View {
 
             Spacer()
 
+            // Bulk pin for this provider: shown on the full card only (the
+            // dashboard header is itself a button) and only while there is
+            // something left to pin.
+            if content == .full, let onPinWarmCacheSessions, unpinnedWarmCacheCount > 0 {
+                Button(action: onPinWarmCacheSessions) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "star")
+                        Image(systemName: "flame.fill")
+                            .font(.system(size: 8))
+                    }
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 4)
+                    .background(.quaternary.opacity(0.8), in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .help(
+                    "Pin the \(unpinnedWarmCacheCount) warm-cache \(snapshot.id.displayName) "
+                        + "session\(unpinnedWarmCacheCount == 1 ? "" : "s") as priorities"
+                )
+            }
+
             Text(content == .prioritySessions ? priorityCountLabel : sessionCountLabel)
                 .font(.caption2.weight(.medium))
                 .foregroundStyle(.secondary)
@@ -166,15 +196,28 @@ struct ProviderCardView: View {
                     HStack(spacing: 2) {
                         Image(systemName: "clock")
                             .font(.system(size: 8))
-                        Text(countdown.text)
+                        Text(usageResetDisplay == .dateTime ? resetDateText(resetsAt, now: now) : countdown.text)
                     }
                     .foregroundStyle(.secondary)
-                    .help("\(window.label) resets in \(countdown.text)")
+                    .help("\(window.label) resets in \(countdown.text) — \(resetsAt.formatted(date: .abbreviated, time: .shortened))")
                 }
             }
             .font(.caption2)
-            .frame(width: 58, alignment: .trailing)
+            .frame(width: usageResetDisplay == .dateTime ? 74 : 58, alignment: .trailing)
         }
+    }
+
+    /// "14:30" when the reset falls today, "Sat 14:30" within the week,
+    /// "6 Sep" beyond — short enough for the trailing column.
+    private func resetDateText(_ resetsAt: Date, now: Date) -> String {
+        let calendar = Calendar.autoupdatingCurrent
+        if calendar.isDate(resetsAt, inSameDayAs: now) {
+            return resetsAt.formatted(date: .omitted, time: .shortened)
+        }
+        if resetsAt.timeIntervalSince(now) < 6 * 24 * 60 * 60 {
+            return resetsAt.formatted(.dateTime.weekday(.abbreviated).hour().minute())
+        }
+        return resetsAt.formatted(.dateTime.day().month(.abbreviated))
     }
 
     // A single data-freshness note shown only when NO window has a reset time

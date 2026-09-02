@@ -3,7 +3,7 @@ import SwiftUI
 
 /// The Providers section: which providers appear in the main view.
 struct ProvidersSettingsSection: View {
-    let model: AppModel
+    @Bindable var model: AppModel
 
     var body: some View {
         Section("Providers") {
@@ -14,6 +14,20 @@ struct ProvidersSettingsSection: View {
                 ))
             }
             Text("Unavailable providers remain hidden from the main view.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            settingsControlRow("Usage reset shows") {
+                Picker("Usage reset shows", selection: $model.usageResetDisplay) {
+                    ForEach(UsageResetDisplay.allCases) { display in
+                        Text(display.label).tag(display)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+            }
+
+            Text("The 5-hour and 7-day bars show when each window resets, as a countdown or as a clock time. Hovering shows both. A window with no reset yet was measured from a source that does not report one; Claude Code and Codex report it after the first API response of a session.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
