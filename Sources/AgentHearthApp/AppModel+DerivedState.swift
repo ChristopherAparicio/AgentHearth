@@ -182,51 +182,48 @@ extension AppModel {
 
     /// The configurable menu-bar text. Nil renders the flame icon alone —
     /// including when the selected usage window currently reports no data.
-    var menuBarTitle: String? {
-        switch menuBarDisplayMode {
-        case .iconOnly:
-            return nil
-        case .sessionCounts:
-            return menuBarSummary
-        case .usageWindow:
-            guard let selection = menuBarUsageWindow,
-                  let window = snapshots.first(where: { $0.id == selection.providerID })?
-                      .usageWindows.first(where: { $0.id == selection.windowID })
-            else { return nil }
-            return "\(Int((window.usedFraction * 100).rounded()))%"
-        case .cacheReuse:
-            guard let average = averageCacheReuse else { return nil }
-            return "\(Int((average * 100).rounded()))%"
-        }
+    /// The configured menu-bar items resolved against the visible providers.
+    /// Shared by the status item and the Settings preview so both always agree.
+    var menuBarRenderedItems: [MenuBarRenderedItem] {
+        MenuBarLayoutRenderer.render(
+            menuBarLayout,
+            snapshots: visibleSnapshots,
+            cacheWarningSeconds: alertRules.preferences.cacheWarningSeconds
+        )
     }
 
-    /// Mean cache reuse across the visible sessions that report one, weighing
-    /// each session equally — the same per-session metric the rows display.
-    var averageCacheReuse: Double? {
-        let rates = visibleSnapshots.flatMap(\.sessions).compactMap { session in
-            session.cacheHealth?.tokenReuseRate ?? session.cache.cacheReuseRate
+    /// Usage windows a menu-bar item can pin within its scope, plus the
+    /// currently stored one when its provider is offline, so the picker can
+    /// always name the active choice.
+    func availableUsageWindows(in scope: MenuBarScope, current: String?) -> [MenuBarUsageWindowChoice] {
+        let scoped = snapshots.filter { snapshot in
+            scope.providerID.map { $0 == snapshot.id } ?? true
         }
-        guard !rates.isEmpty else { return nil }
-        return rates.reduce(0, +) / Double(rates.count)
-    }
-
-    /// Usage windows currently reported by any provider, plus the stored
-    /// selection when its provider is offline, so Settings can always render
-    /// the active choice.
-    var availableMenuBarUsageWindows: [MenuBarUsageWindowSelection] {
-        var choices: [MenuBarUsageWindowSelection] = snapshots.flatMap { snapshot in
+        var choices: [MenuBarUsageWindowChoice] = scoped.flatMap { snapshot in
             snapshot.usageWindows.map { window in
-                MenuBarUsageWindowSelection(
-                    providerID: snapshot.id,
+                MenuBarUsageWindowChoice(
                     windowID: window.id,
-                    label: "\(snapshot.id.displayName) · \(window.label)"
+                    label: scope.providerID == nil
+                        ? "\(snapshot.id.displayName) · \(window.label)"
+                        : window.label
                 )
             }
         }
-        if let selection = menuBarUsageWindow, !choices.contains(where: { $0.id == selection.id }) {
-            choices.append(selection)
+        if let current, !choices.contains(where: { $0.windowID == current }) {
+            choices.append(MenuBarUsageWindowChoice(windowID: current, label: current))
         }
         return choices.sorted { $0.label < $1.label }
+    }
+
+    func moveMenuBarItem(_ itemID: UUID, by offset: Int) {
+        guard let index = menuBarLayout.items.firstIndex(where: { $0.id == itemID }) else { return }
+        let destination = index + offset
+        guard menuBarLayout.items.indices.contains(destination) else { return }
+        menuBarLayout.items.swapAt(index, destination)
+    }
+
+    func removeMenuBarItem(_ itemID: UUID) {
+        menuBarLayout.items.removeAll { $0.id == itemID }
     }
 
     /// Pinned sessions within the current provider scope. Drives the
@@ -240,27 +237,6 @@ extension AppModel {
             scoped = hostScopedSnapshots
         }
         return scoped.flatMap(\.sessions).count { sessionFocus.isPinned($0) }
-    }
-
-    var menuBarSummary: String {
-        let base = sessions.isEmpty ? "Hearth" : "\(workingCount) · \(attentionCount)"
-        guard let usage = menuBarUsageBadge else { return base }
-        return "\(base) · \(usage)"
-    }
-
-    /// Standing usage badge for the menu bar: the highest window utilization
-    /// across providers, shown once it crosses the lowest configured usage
-    /// alert threshold. Notifications announce the crossing; this keeps it
-    /// visible afterwards, since a menu-bar app has no Dock icon to badge.
-    var menuBarUsageBadge: String? {
-        let preferences = alertRules.preferences
-        guard preferences.notificationsEnabled, preferences.usageLimitEnabled,
-              let lowestThreshold = preferences.usageAlertThresholds.map(\.percentage).min(),
-              let highestFraction = visibleSnapshots.flatMap(\.usageWindows).map(\.usedFraction).max()
-        else { return nil }
-        let percent = Int((highestFraction * 100).rounded())
-        guard percent >= lowestThreshold else { return nil }
-        return "\(percent)%"
     }
 
     func normalizeSelection() {

@@ -107,17 +107,10 @@ final class AppModel {
             normalizeSelection()
         }
     }
-    var menuBarDisplayMode: MenuBarDisplayMode {
+    var menuBarLayout: MenuBarLayout {
         didSet {
-            guard menuBarDisplayMode != oldValue else { return }
-            preferences.menuBarDisplayMode = menuBarDisplayMode
-        }
-    }
-
-    var menuBarUsageWindow: MenuBarUsageWindowSelection? {
-        didSet {
-            guard menuBarUsageWindow != oldValue else { return }
-            preferences.menuBarUsageWindow = menuBarUsageWindow
+            guard menuBarLayout != oldValue else { return }
+            preferences.menuBarLayout = menuBarLayout
         }
     }
 
@@ -301,8 +294,7 @@ final class AppModel {
         self.dataSourceModes = preferences.dataSourceModes
         self.sessionDisplayWindow = preferences.sessionDisplayWindow
         self.visibleSessionStatuses = preferences.visibleSessionStatuses
-        self.menuBarDisplayMode = preferences.menuBarDisplayMode
-        self.menuBarUsageWindow = preferences.menuBarUsageWindow
+        self.menuBarLayout = preferences.menuBarLayout
         self.maximumVisibleSessions = preferences.maximumVisibleSessions
         self.showsSessionCacheIcon = preferences.showsSessionCacheIcon
         self.showsSessionCacheCountdown = preferences.showsSessionCacheCountdown

@@ -28,7 +28,7 @@ private enum SettingsSection: CaseIterable {
         case .providers:
             "Providers provider visibility unavailable agent \(Self.providerNames)"
         case .menuBar:
-            "Menu Bar icon badge percentage usage window cache reuse counts display flame show next to the icon session counts icon only"
+            "Menu Bar icon badge percentage usage window cache reuse counts display flame show next to the icon session counts icon only items color prefix preview expiring caches add item Codex Claude OpenCode"
         case .sessionList:
             "Sessions session list maximum limit provider menu bar Codex Claude OpenCode maximum per provider compact layout"
         case .sessionRow:

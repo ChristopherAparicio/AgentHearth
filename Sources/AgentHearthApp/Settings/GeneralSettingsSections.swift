@@ -20,55 +20,6 @@ struct ProvidersSettingsSection: View {
     }
 }
 
-/// The Menu Bar section: what the label next to the flame icon displays.
-struct MenuBarSettingsSection: View {
-    @Bindable var model: AppModel
-
-    var body: some View {
-        Section("Menu Bar") {
-            settingsControlRow("Show next to the icon") {
-                Picker("Menu bar display", selection: $model.menuBarDisplayMode) {
-                    ForEach(MenuBarDisplayMode.allCases) { mode in
-                        Text(mode.label).tag(mode)
-                    }
-                }
-                .labelsHidden()
-                .frame(width: 170)
-            }
-
-            if model.menuBarDisplayMode == .usageWindow {
-                settingsControlRow("Usage window") {
-                    Picker("Usage window", selection: $model.menuBarUsageWindow) {
-                        Text("None").tag(MenuBarUsageWindowSelection?.none)
-                        ForEach(model.availableMenuBarUsageWindows) { choice in
-                            Text(choice.label).tag(Optional(choice))
-                        }
-                    }
-                    .labelsHidden()
-                    .frame(width: 220)
-                }
-            }
-
-            Text(menuBarCaption)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private var menuBarCaption: String {
-        switch model.menuBarDisplayMode {
-        case .sessionCounts:
-            "Working and attention counts; a usage percentage joins them once it crosses your lowest usage alert threshold."
-        case .usageWindow:
-            "The selected provider window's utilization. The icon stands alone while that provider reports no data."
-        case .cacheReuse:
-            "Average cache reuse across the visible sessions."
-        case .iconOnly:
-            "Only the flame icon."
-        }
-    }
-}
-
 /// The Session List section: how many sessions each provider shows.
 struct SessionListSettingsSection: View {
     @Bindable var model: AppModel

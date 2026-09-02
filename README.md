@@ -11,6 +11,10 @@ code to an AgentHearth service.
 ## Why AgentHearth
 
 - One adaptive menu bar for OpenCode, Codex, and Claude Code.
+- A composable menu-bar label: add items (session counts, usage windows,
+  cache reuse, expiring caches) scoped to one provider or all, each with its
+  own color and prefix, with a live preview in Settings. The default is the
+  flame alone.
 - Live session state with project and model context.
 - Prompt-cache temperature and cache-hit health per session.
 - Cache Insights dashboard with request-level hits, misses, cold starts, daily

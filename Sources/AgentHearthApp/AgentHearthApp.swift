@@ -16,16 +16,10 @@ struct AgentHearthApp: App {
         MenuBarExtra {
             MenuBarRootView(model: model)
         } label: {
-            // An explicit image+text pair: MenuBarExtra drops a Label's title,
-            // which is why the summary never appeared next to the flame.
-            if let title = model.menuBarTitle {
-                HStack(spacing: 4) {
-                    Image(systemName: "flame.fill")
-                    Text(title)
-                }
-            } else {
-                Image(systemName: "flame.fill")
-            }
+            MenuBarStatusLabel(
+                items: model.menuBarRenderedItems,
+                showsFlame: model.menuBarLayout.effectiveShowsFlame
+            )
         }
         .menuBarExtraStyle(.window)
 

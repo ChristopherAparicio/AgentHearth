@@ -264,23 +264,23 @@ final class PreferencesStore {
         return calendar.date(from: components) ?? approximate
     }
 
-    var menuBarDisplayMode: MenuBarDisplayMode {
+    /// The menu-bar composition. A stored legacy display mode is migrated the
+    /// first time so an upgrade keeps the user's menu bar unchanged; a fresh
+    /// install gets the flame alone.
+    var menuBarLayout: MenuBarLayout {
         get {
-            defaults.string(forKey: PreferenceKey.menuBarDisplayMode)
-                .flatMap(MenuBarDisplayMode.init(rawValue:)) ?? .sessionCounts
-        }
-        set { defaults.set(newValue.rawValue, forKey: PreferenceKey.menuBarDisplayMode) }
-    }
-
-    var menuBarUsageWindow: MenuBarUsageWindowSelection? {
-        get { decode(MenuBarUsageWindowSelection.self, forKey: PreferenceKey.menuBarUsageWindow) }
-        set {
-            if let newValue {
-                encode(newValue, forKey: PreferenceKey.menuBarUsageWindow)
-            } else {
-                defaults.removeObject(forKey: PreferenceKey.menuBarUsageWindow)
+            if let layout = decode(MenuBarLayout.self, forKey: PreferenceKey.menuBarLayout) {
+                return layout
             }
+            guard let legacyMode = defaults.string(forKey: PreferenceKey.menuBarDisplayMode)
+                .flatMap(MenuBarDisplayMode.init(rawValue:))
+            else { return .default }
+            return MenuBarLayout.migrated(
+                from: legacyMode,
+                usageWindow: decode(MenuBarUsageWindowSelection.self, forKey: PreferenceKey.menuBarUsageWindow)
+            )
         }
+        set { encode(newValue, forKey: PreferenceKey.menuBarLayout) }
     }
 
     private func decode<Value: Decodable>(_ type: Value.Type, forKey key: String) -> Value? {
@@ -330,4 +330,5 @@ private enum PreferenceKey {
     static let lastWeeklyHistoryReport = "lastWeeklyHistoryReport"
     static let menuBarDisplayMode = "menuBarDisplayMode"
     static let menuBarUsageWindow = "menuBarUsageWindow"
+    static let menuBarLayout = "menuBarLayout"
 }

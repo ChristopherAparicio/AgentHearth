@@ -162,6 +162,18 @@ fresh lifecycle states. Local-only ignores pushed events. Realtime-only never
 opens provider history and therefore intentionally shows unknown cache data
 when the provider hook does not include token counters.
 
+## Menu-bar composition
+
+`MenuBarLayout` (domain) is an ordered list of `MenuBarItem`s — a metric, a
+provider scope, a tint from a fixed palette, an optional prefix — next to an
+optional flame. `MenuBarLayoutRenderer` resolves it against provider snapshots
+into plain `MenuBarRenderedItem`s, so the composition is unit-tested without
+SwiftUI. The app draws those items twice from the same source: in the Settings
+preview and in the status item. Because `MenuBarExtra` renders its label as a
+template image, the status item rasterizes the composition into a non-template
+`NSImage` whenever a custom color or provider glyph is involved, and falls back
+to plain text otherwise so automatic colors keep following the menu bar.
+
 ## Alerts and navigation adapters
 
 `SnapshotAlertDetector` owns transition detection and remains independent of
