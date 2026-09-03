@@ -177,20 +177,29 @@ struct ProviderCardView: View {
         }
     }
 
-    // A single data-freshness note shown only when NO window has a reset time
-    // (usage read from Claude Desktop's journal, which records none). Shown once
-    // per card — not per window — so it never reads like a per-window reset.
+    /// A single data-freshness note, shown once per card rather than per
+    /// window so it never reads like a per-window reset. Usage figures only
+    /// refresh when a session of that provider reports them, so an idle
+    /// provider keeps showing its last measurement — and a stale 0% would
+    /// otherwise read as "quota free" when it means "nothing measured since".
     @ViewBuilder
     private func usageMeasuredNote(now: Date) -> some View {
         let windows = snapshot.usageWindows
-        if windows.allSatisfy({ $0.resetsAt == nil }),
-           let measuredAt = windows.map(\.measuredAt).max(),
-           now.timeIntervalSince(measuredAt) >= 60 {
-            let age = CompactDuration(now.timeIntervalSince(measuredAt))
-            Label("Measured \(age.text) ago", systemImage: "clock.arrow.circlepath")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-                .help("Reset times appear once a terminal session reports them")
+        let lacksResets = windows.allSatisfy { $0.resetsAt == nil }
+        if let measuredAt = windows.map(\.measuredAt).max() {
+            let age = now.timeIntervalSince(measuredAt)
+            // Without reset times the age is the only context there is, so show
+            // it almost immediately; otherwise only once it is genuinely stale.
+            if age >= (lacksResets ? 60 : 10 * 60) {
+                Label("Measured \(CompactDuration(age).text) ago", systemImage: "clock.arrow.circlepath")
+                    .font(.caption2)
+                    .foregroundStyle(age >= 2 * 60 * 60 ? AnyShapeStyle(.orange) : AnyShapeStyle(.tertiary))
+                    .help(
+                        lacksResets
+                            ? "Reset times appear once a terminal session reports them"
+                            : "Usage refreshes when a session of this provider reports it"
+                    )
+            }
         }
     }
 
