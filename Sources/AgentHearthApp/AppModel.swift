@@ -444,6 +444,15 @@ final class AppModel {
             connectorServerError = error.localizedDescription
         }
 
+        // Refresh after the server is up so the connectors an app update left
+        // behind are replaced before they post — an outdated connector is
+        // rejected silently, which reads as "no realtime data" rather than as
+        // something to fix.
+        connectorInstallation.refreshOpenCodeInstallationState()
+        connectorInstallation.refreshCodexInstallationState()
+        connectorInstallation.refreshClaudeCodeInstallationState()
+        connectorInstallation.updateOutdatedConnectors()
+
         let monitor = monitor
         let initialModes = dataSourceModes
         let additionalConnectors = connectorGraph.additionalConnectors(

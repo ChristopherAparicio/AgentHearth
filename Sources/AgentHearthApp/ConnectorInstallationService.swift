@@ -100,4 +100,16 @@ final class ConnectorInstallationService {
     func refreshClaudeCodeInstallationState() {
         claudeCodeInstallationState = claudeCodeInstaller.state(comparedWith: bundledClaudeCodeHookURL)
     }
+
+    /// Re-installs connectors that are already installed but older than the
+    /// bundled copy. An outdated connector fails silently — the app rejects its
+    /// posts and simply shows no realtime data — so waiting for the user to
+    /// notice a badge in Settings loses live statuses and usage reset times for
+    /// as long as it goes unseen. Only connectors the user already opted into
+    /// are touched; a connector that is not installed stays that way.
+    func updateOutdatedConnectors() {
+        if openCodeInstallationState == .updateAvailable { installOpenCodeConnector() }
+        if codexInstallationState == .updateAvailable { installCodexConnector() }
+        if claudeCodeInstallationState == .updateAvailable { installClaudeCodeConnector() }
+    }
 }
