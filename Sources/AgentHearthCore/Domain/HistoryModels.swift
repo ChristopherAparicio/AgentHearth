@@ -103,12 +103,75 @@ public struct ProjectHistorySummary: Identifiable, Equatable, Sendable, CacheAct
     }
 }
 
+/// One observed mid-session model change, derived from consecutive measurements
+/// of the same session. The model participates in the provider's prompt-cache
+/// key, so the first turn after a switch cannot read the previous model's cache
+/// and reprocesses the conversation at full price.
+///
+/// Measurements are sampled rather than recorded per turn, so a switch made and
+/// reverted between two samples is not observed. The count is a floor.
+public struct ModelSwitchSummary: Identifiable, Equatable, Sendable {
+    public let sessionKey: String
+    public let sessionTitle: String
+    public let projectName: String
+    public let previousModel: String
+    public let model: String
+    public let occurredAt: Date
+    public let inputTokens: Int
+    public let cachedInputTokens: Int
+
+    public init(
+        sessionKey: String,
+        sessionTitle: String,
+        projectName: String,
+        previousModel: String,
+        model: String,
+        occurredAt: Date,
+        inputTokens: Int,
+        cachedInputTokens: Int
+    ) {
+        self.sessionKey = sessionKey
+        self.sessionTitle = sessionTitle
+        self.projectName = projectName
+        self.previousModel = previousModel
+        self.model = model
+        self.occurredAt = occurredAt
+        self.inputTokens = max(0, inputTokens)
+        self.cachedInputTokens = max(0, cachedInputTokens)
+    }
+
+    public var id: String { "\(sessionKey):\(Int(occurredAt.timeIntervalSince1970 * 1_000))" }
+
+    /// Input tokens the turn after the switch could not read from cache. This is
+    /// measured, not modelled: it is the observed uncached input of that turn.
+    public var reprocessedInputTokens: Int { max(0, inputTokens - cachedInputTokens) }
+}
+
+/// Window totals for mid-session model changes. Counted over every observed
+/// change, not only the ones the dashboard lists, so the header stays true when
+/// the list is truncated.
+public struct ModelSwitchTotals: Equatable, Sendable {
+    public let switchCount: Int
+    public let sessionCount: Int
+    public let reprocessedInputTokens: Int
+
+    public init(switchCount: Int, sessionCount: Int, reprocessedInputTokens: Int) {
+        self.switchCount = max(0, switchCount)
+        self.sessionCount = max(0, sessionCount)
+        self.reprocessedInputTokens = max(0, reprocessedInputTokens)
+    }
+
+    public static let empty = ModelSwitchTotals(switchCount: 0, sessionCount: 0, reprocessedInputTokens: 0)
+}
+
 public struct HistoryDashboardSnapshot: Equatable, Sendable, CacheActivityAggregate {
     public let startsAt: Date
     public let endsAt: Date
     public let buckets: [CacheHistoryBucket]
     public let sessions: [SessionHistorySummary]
     public let projects: [ProjectHistorySummary]
+    public let modelSwitches: [ModelSwitchSummary]
+    public let modelSwitchTotals: ModelSwitchTotals
     public let storageBytes: Int64
 
     public init(
@@ -117,6 +180,8 @@ public struct HistoryDashboardSnapshot: Equatable, Sendable, CacheActivityAggreg
         buckets: [CacheHistoryBucket],
         sessions: [SessionHistorySummary],
         projects: [ProjectHistorySummary],
+        modelSwitches: [ModelSwitchSummary] = [],
+        modelSwitchTotals: ModelSwitchTotals = .empty,
         storageBytes: Int64
     ) {
         self.startsAt = startsAt
@@ -124,6 +189,8 @@ public struct HistoryDashboardSnapshot: Equatable, Sendable, CacheActivityAggreg
         self.buckets = buckets
         self.sessions = sessions
         self.projects = projects
+        self.modelSwitches = modelSwitches
+        self.modelSwitchTotals = modelSwitchTotals
         self.storageBytes = storageBytes
     }
 
@@ -139,6 +206,8 @@ public struct HistoryDashboardSnapshot: Equatable, Sendable, CacheActivityAggreg
         buckets: [],
         sessions: [],
         projects: [],
+        modelSwitches: [],
+        modelSwitchTotals: .empty,
         storageBytes: 0
     )
 }

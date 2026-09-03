@@ -13,6 +13,24 @@ public actor HistoryStore {
     /// cache-write).
     private static let hitRatioMeetsThresholdSQL = "CAST(cached_input_tokens AS REAL)/input_tokens>=?"
 
+    /// Shared prologue for both model-change queries: consecutive measurements
+    /// of one session, each carrying the model of the measurement before it.
+    /// One definition keeps the listed rows and their totals from drifting.
+    private static let modelSwitchCTE = """
+    WITH ordered AS (
+      SELECT session_key,project_name,title,model,occurred_at_ms,
+             input_tokens,cached_input_tokens,
+             LAG(model) OVER (PARTITION BY session_key ORDER BY occurred_at_ms) AS previous_model
+      FROM cache_events
+      WHERE occurred_at_ms>=? AND occurred_at_ms<? AND (? IS NULL OR provider=?)
+            AND model IS NOT NULL AND model<>''
+    )
+    """
+
+    /// A session's first measurement has no predecessor: that is a cold start,
+    /// not a change.
+    private static let modelSwitchPredicate = "WHERE previous_model IS NOT NULL AND previous_model<>model"
+
     private let databaseURL: URL
     nonisolated(unsafe) private var database: OpaquePointer?
     private var lastPrunedAt: Date?
@@ -90,6 +108,18 @@ public actor HistoryStore {
                 end: endsAt,
                 providerID: providerID,
                 threshold: threshold
+            ),
+            modelSwitches: loadModelSwitches(
+                database: database,
+                start: startsAt,
+                end: endsAt,
+                providerID: providerID
+            ),
+            modelSwitchTotals: loadModelSwitchTotals(
+                database: database,
+                start: startsAt,
+                end: endsAt,
+                providerID: providerID
             ),
             storageBytes: fileSize()
         )
@@ -291,6 +321,95 @@ public actor HistoryStore {
             ))
         }
         return values
+    }
+
+    /// Consecutive measurements of one session that report different models.
+    /// The model is part of the provider's prompt-cache key, so the turn after a
+    /// switch cannot reuse the previous model's cache. The first measurement of
+    /// a session has no predecessor and is a cold start, not a switch.
+    ///
+    /// Requires SQLite window functions; on an older engine `prepare` fails and
+    /// the section degrades to empty rather than reporting a wrong count.
+    private func loadModelSwitches(
+        database: OpaquePointer,
+        start: Date,
+        end: Date,
+        providerID: AgentProviderID?
+    ) -> [ModelSwitchSummary] {
+        let sql = """
+        \(Self.modelSwitchCTE)
+        SELECT session_key,title,project_name,previous_model,model,occurred_at_ms,
+               input_tokens,cached_input_tokens
+        FROM ordered
+        \(Self.modelSwitchPredicate)
+        ORDER BY input_tokens-cached_input_tokens DESC, occurred_at_ms DESC
+        LIMIT 20
+        """
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK, let statement else {
+            return []
+        }
+        defer { sqlite3_finalize(statement) }
+        bindModelSwitchRange(statement, start: start, end: end, providerID: providerID)
+        var values: [ModelSwitchSummary] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            guard let sessionKey = text(statement, 0),
+                  let previousModel = text(statement, 3),
+                  let model = text(statement, 4)
+            else { continue }
+            values.append(ModelSwitchSummary(
+                sessionKey: sessionKey,
+                sessionTitle: text(statement, 1) ?? sessionKey,
+                projectName: text(statement, 2) ?? "Unassigned",
+                previousModel: previousModel,
+                model: model,
+                occurredAt: Date(timeIntervalSince1970: Double(sqlite3_column_int64(statement, 5)) / 1_000),
+                inputTokens: Int(sqlite3_column_int64(statement, 6)),
+                cachedInputTokens: Int(sqlite3_column_int64(statement, 7))
+            ))
+        }
+        return values
+    }
+
+    /// Totals over every observed change in the window, not only the listed
+    /// rows, so a truncated list cannot understate the header.
+    private func loadModelSwitchTotals(
+        database: OpaquePointer,
+        start: Date,
+        end: Date,
+        providerID: AgentProviderID?
+    ) -> ModelSwitchTotals {
+        let sql = """
+        \(Self.modelSwitchCTE)
+        SELECT COUNT(*),COUNT(DISTINCT session_key),
+               COALESCE(SUM(input_tokens-cached_input_tokens),0)
+        FROM ordered
+        \(Self.modelSwitchPredicate)
+        """
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK, let statement else {
+            return .empty
+        }
+        defer { sqlite3_finalize(statement) }
+        bindModelSwitchRange(statement, start: start, end: end, providerID: providerID)
+        guard sqlite3_step(statement) == SQLITE_ROW else { return .empty }
+        return ModelSwitchTotals(
+            switchCount: Int(sqlite3_column_int64(statement, 0)),
+            sessionCount: Int(sqlite3_column_int64(statement, 1)),
+            reprocessedInputTokens: Int(sqlite3_column_int64(statement, 2))
+        )
+    }
+
+    private func bindModelSwitchRange(
+        _ statement: OpaquePointer,
+        start: Date,
+        end: Date,
+        providerID: AgentProviderID?
+    ) {
+        sqlite3_bind_int64(statement, 1, milliseconds(start))
+        sqlite3_bind_int64(statement, 2, milliseconds(end))
+        bindOptional(providerID?.rawValue, to: statement, at: 3)
+        bindOptional(providerID?.rawValue, to: statement, at: 4)
     }
 
     private func bindQueryRange(

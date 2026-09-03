@@ -22,6 +22,7 @@ struct HistoryDashboardView: View {
                     metrics
                     activityChart
                     projects
+                    if !snapshot.modelSwitches.isEmpty { modelSwitches }
                     sessions
                 }
                 footer
@@ -227,6 +228,92 @@ struct HistoryDashboardView: View {
         }
     }
 
+    private var modelSwitches: some View {
+        GroupBox {
+            VStack(spacing: 0) {
+                ForEach(Array(snapshot.modelSwitches.prefix(5).enumerated()), id: \.element.id) { index, change in
+                    if index > 0 { Divider() }
+                    HStack(spacing: 12) {
+                        Image(systemName: "arrow.triangle.swap")
+                            .foregroundStyle(.secondary)
+                            .frame(width: 20)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("\(modelLabel(change.previousModel)) → \(modelLabel(change.model))")
+                                .font(.callout.weight(.semibold))
+                                .lineLimit(1)
+                            Text(sessionContext(change))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        Spacer()
+                        VStack(alignment: .trailing, spacing: 2) {
+                            Text("\(tokens(change.reprocessedInputTokens)) reprocessed")
+                                .font(.callout.weight(.semibold).monospacedDigit())
+                                .foregroundStyle(.orange)
+                            Text(change.occurredAt, format: .dateTime.day().month().hour().minute())
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.vertical, 9)
+                }
+                Divider()
+                HStack {
+                    Text(modelSwitchFootnote)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
+                .padding(.top, 8)
+            }
+        } label: {
+            HStack {
+                Label("Mid-session model changes", systemImage: "arrow.triangle.swap")
+                    .font(.headline)
+                Spacer()
+                Text(modelSwitchHeadline)
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    /// A session title usually already ends with its project ("Claude Code ·
+    /// backend"), so appending the project again reads as "backend · backend".
+    /// Append it only when the title does not already carry it — a session with
+    /// a summary title ("Analyser ApiStrike") still needs the project to be
+    /// locatable.
+    private func sessionContext(_ change: ModelSwitchSummary) -> String {
+        change.sessionTitle.hasSuffix("· \(change.projectName)")
+            ? change.sessionTitle
+            : "\(change.sessionTitle) · \(change.projectName)"
+    }
+
+    private var modelSwitchHeadline: String {
+        let totals = snapshot.modelSwitchTotals
+        return [
+            plural(totals.switchCount, "change", "changes"),
+            plural(totals.sessionCount, "session", "sessions"),
+            "\(tokens(totals.reprocessedInputTokens)) reprocessed"
+        ].joined(separator: " · ")
+    }
+
+    /// The count is a floor: measurements are sampled rather than recorded per
+    /// turn, so a change made and undone between two samples leaves no trace.
+    private var modelSwitchFootnote: String {
+        let listed = min(5, snapshot.modelSwitches.count)
+        let total = snapshot.modelSwitchTotals.switchCount
+        let scope = total > listed
+            ? "Showing the \(listed) costliest of \(total). "
+            : ""
+        return scope + "Sampled from measured turns, so a change made and reverted between two samples is not counted."
+    }
+
+    private func plural(_ value: Int, _ singular: String, _ plural: String) -> String {
+        "\(value) \(value == 1 ? singular : plural)"
+    }
+
     private func sessionRow(_ session: SessionHistorySummary) -> some View {
         HStack(spacing: 12) {
             ZStack {
@@ -300,6 +387,14 @@ struct HistoryDashboardView: View {
 
     private func percent(_ value: Double?) -> String {
         value.map { "\(Int(($0 * 100).rounded()))%" } ?? "—"
+    }
+
+    /// Drops a trailing dated snapshot suffix ("claude-haiku-4-5-20251001") so a
+    /// transition stays on one line. Undated identifiers are shown verbatim.
+    private func modelLabel(_ identifier: String) -> String {
+        let parts = identifier.split(separator: "-")
+        guard let last = parts.last, last.count == 8, last.allSatisfy(\.isNumber) else { return identifier }
+        return parts.dropLast().joined(separator: "-")
     }
 
     private func tokens(_ value: Int) -> String {

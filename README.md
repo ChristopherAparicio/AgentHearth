@@ -15,6 +15,8 @@ code to an AgentHearth service.
 - Prompt-cache temperature and cache-hit health per session.
 - Cache Insights dashboard with request-level hits, misses, cold starts, daily
   charts, and per-session/provider/machine breakdowns.
+- Mid-session model changes, which invalidate the prompt cache, listed with the
+  input tokens the next turn had to reprocess.
 - Bounded local history with 7/30/90/365-day retention and optional daily or
   weekly macOS reports.
 - Provider/machine-scoped cache-expiry countdowns with a configurable warning window.
