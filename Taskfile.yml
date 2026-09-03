@@ -1,0 +1,137 @@
+version: "3"
+
+vars:
+  PROJECT: AgentHearth.xcodeproj
+  SCHEME: AgentHearth
+  APP_NAME: AgentHearth.app
+  INSTALL_DIR: /Applications
+
+tasks:
+  bootstrap:
+    desc: Generate the Xcode project from project.yml (requires XcodeGen)
+    preconditions:
+      - sh: command -v xcodegen >/dev/null 2>&1
+        msg: "xcodegen is required. Install it with: brew install xcodegen"
+    cmds:
+      - xcodegen generate
+
+  build:
+    desc: Build the app (CONFIG=Debug by default; pass CONFIG=Release for a release build)
+    deps: [bootstrap]
+    vars:
+      CONFIG: '{{.CONFIG | default "Debug"}}'
+    cmds:
+      - xcodebuild -project {{.PROJECT}} -scheme {{.SCHEME}} -configuration {{.CONFIG}} CODE_SIGNING_ALLOWED=NO build
+
+  test:
+    desc: Run the test suite
+    deps: [bootstrap]
+    cmds:
+      - xcodebuild -project {{.PROJECT}} -scheme {{.SCHEME}} -configuration Debug CODE_SIGNING_ALLOWED=NO test
+
+  open:
+    desc: Open the generated project in Xcode
+    deps: [bootstrap]
+    cmds:
+      - open {{.PROJECT}}
+
+  install:
+    desc: Build a signed Release app and copy it into /Applications
+    deps: [bootstrap]
+    vars:
+      # Signing with a stable Developer ID identity (not ad-hoc) keeps the
+      # app's identity constant across installs, so macOS permission grants
+      # (notifications, keychain access) survive updates instead of resetting.
+      # "auto" signs when such a certificate is in the keychain and falls back
+      # to an unsigned build otherwise, so contributors without a certificate
+      # can still `task install`. Force with SIGN=YES / SIGN=NO; TEAM=... to
+      # pick a team when several identities exist.
+      TEAM: '{{.TEAM | default ""}}'
+      SIGN: '{{.SIGN | default "auto"}}'
+    cmds:
+      # The build directory is resolved from xcodebuild rather than hardcoded,
+      # and a running instance is quit first so the copy succeeds.
+      - |
+        SIGN="{{.SIGN}}"
+        if [ "$SIGN" = "auto" ]; then
+          if security find-identity -v -p codesigning 2>/dev/null | grep -q "Developer ID Application"; then
+            SIGN=YES
+          else
+            SIGN=NO
+            echo "No Developer ID certificate found - building unsigned (macOS permission grants will not persist across reinstalls)."
+          fi
+        fi
+        if [ "$SIGN" = "YES" ]; then
+          TEAM="{{.TEAM}}"
+          if [ -z "$TEAM" ]; then
+            TEAM=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | sed -E 's/.*\(([A-Z0-9]+)\).*/\1/')
+          fi
+          xcodebuild -project {{.PROJECT}} -scheme {{.SCHEME}} -configuration Release DEVELOPMENT_TEAM="$TEAM" CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="Developer ID Application" build
+        else
+          xcodebuild -project {{.PROJECT}} -scheme {{.SCHEME}} -configuration Release CODE_SIGNING_ALLOWED=NO build
+        fi
+      - |
+        BUILT="$(xcodebuild -project {{.PROJECT}} -scheme {{.SCHEME}} -configuration Release -showBuildSettings 2>/dev/null | awk -F' = ' '/ BUILT_PRODUCTS_DIR /{print $2; exit}')"
+        APP="$BUILT/{{.APP_NAME}}"
+        if [ ! -d "$APP" ]; then echo "Build product not found at $APP"; exit 1; fi
+        echo "Installing $APP -> {{.INSTALL_DIR}}/{{.APP_NAME}}"
+        osascript -e 'quit app "AgentHearth"' >/dev/null 2>&1 || true
+        sleep 1
+        rm -rf "{{.INSTALL_DIR}}/{{.APP_NAME}}"
+        cp -R "$APP" "{{.INSTALL_DIR}}/"
+        echo "Installed. Launch it from Spotlight, Launchpad, or: open {{.INSTALL_DIR}}/{{.APP_NAME}}"
+
+  uninstall:
+    desc: Quit and remove the installed app from /Applications
+    cmds:
+      - osascript -e 'quit app "AgentHearth"' >/dev/null 2>&1 || true
+      - rm -rf "{{.INSTALL_DIR}}/{{.APP_NAME}}"
+      - echo "Removed {{.INSTALL_DIR}}/{{.APP_NAME}}"
+
+  release:
+    desc: |
+      Build, sign (Developer ID), notarize, and staple a distributable app.
+      Requirements (one-time):
+        - A "Developer ID Application" certificate in your keychain.
+        - A stored notary profile:
+            xcrun notarytool store-credentials AC_NOTARY \
+              --apple-id "you@example.com" --team-id TEAMID --password APP_SPECIFIC_PASSWORD
+      Just run:
+        task release
+      Override the team or notary profile if needed:
+        TEAM=OTHERTEAM NOTARY_PROFILE=OTHER task release
+    deps: [bootstrap]
+    vars:
+      BUILD_DIR: '{{.BUILD_DIR | default "build"}}'
+      # Apple Developer team id (not a secret). Override with TEAM=... if needed.
+      TEAM: '{{.TEAM | default "8JBCR8G29Z"}}'
+      NOTARY_PROFILE: '{{.NOTARY_PROFILE | default "AC_NOTARY"}}'
+    preconditions:
+      - sh: '[ -n "{{.TEAM}}" ]'
+        msg: "Set your Apple Developer team id, e.g. TEAM=XXXXXXXXXX task release"
+    cmds:
+      - rm -rf "{{.BUILD_DIR}}"
+      - mkdir -p "{{.BUILD_DIR}}"
+      # Archive with the Developer ID identity and Hardened Runtime (from project.yml).
+      - |
+        xcodebuild -project {{.PROJECT}} -scheme {{.SCHEME}} -configuration Release \
+          -archivePath "{{.BUILD_DIR}}/{{.SCHEME}}.xcarchive" \
+          DEVELOPMENT_TEAM="{{.TEAM}}" \
+          CODE_SIGN_STYLE=Manual \
+          CODE_SIGN_IDENTITY="Developer ID Application" \
+          archive
+      # Export the signed .app using the Developer ID export options.
+      - |
+        xcodebuild -exportArchive \
+          -archivePath "{{.BUILD_DIR}}/{{.SCHEME}}.xcarchive" \
+          -exportOptionsPlist Config/ExportOptions.plist \
+          -exportPath "{{.BUILD_DIR}}/export"
+      # Zip, submit to Apple, wait for the verdict, then staple the ticket.
+      - |
+        APP="{{.BUILD_DIR}}/export/{{.APP_NAME}}"
+        ditto -c -k --keepParent "$APP" "{{.BUILD_DIR}}/{{.SCHEME}}.zip"
+        xcrun notarytool submit "{{.BUILD_DIR}}/{{.SCHEME}}.zip" \
+          --keychain-profile "{{.NOTARY_PROFILE}}" --wait
+        xcrun stapler staple "$APP"
+        echo "Notarized app ready at $APP"
+        spctl --assess --type execute --verbose=2 "$APP" || true

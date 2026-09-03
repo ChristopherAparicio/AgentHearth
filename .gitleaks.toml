@@ -1,0 +1,31 @@
+# Gitleaks configuration for AgentHearth.
+#
+# Extends the built-in default ruleset and allowlists the few strings in this
+# repository that look secret-shaped but are intentionally public, so CI and
+# the pre-commit hook never false-positive on them.
+
+title = "AgentHearth gitleaks config"
+
+[extend]
+# Keep the full default gitleaks ruleset; entries below only add allowlists.
+useDefault = true
+
+[[allowlists]]
+# Apple Developer Team ID in the release tooling. Team IDs are public by
+# nature: they are embedded in the code signature of every distributed app.
+description = "Apple Team ID in Taskfile.yml (public identifier, not a secret)"
+condition = "AND"
+paths = ['''Taskfile\.yml''']
+regexes = ['''8JBCR8G29Z''']
+
+[[allowlists]]
+# Documentation placeholders shown in the notarization setup instructions in
+# Taskfile.yml and the README. These are literal placeholder strings the user
+# is told to replace locally; AC_NOTARY is only the *name* of a notarytool
+# keychain profile, not a credential.
+description = "Notarization setup placeholders (APP_SPECIFIC_PASSWORD, you@example.com, AC_NOTARY profile name)"
+regexes = [
+  '''APP_SPECIFIC_PASSWORD''',
+  '''you@example\.com''',
+  '''AC_NOTARY''',
+]

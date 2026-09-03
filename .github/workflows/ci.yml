@@ -1,0 +1,49 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Build and test (macOS)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        # project.yml targets Xcode 26 / Swift 6. Pick the newest toolchain the
+        # runner image ships; adjust the pattern if the image lags behind.
+        run: |
+          # Newest stable toolchain; fall back to any Xcode if only betas exist.
+          XCODE=$(ls -d /Applications/Xcode*.app | grep -vi beta | sort -V | tail -1)
+          XCODE=${XCODE:-$(ls -d /Applications/Xcode*.app | sort -V | tail -1)}
+          echo "Using $XCODE"
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Test
+        run: |
+          xcodebuild -project AgentHearth.xcodeproj -scheme AgentHearth \
+            -configuration Debug CODE_SIGNING_ALLOWED=NO \
+            -destination 'platform=macOS' test
+
+  python:
+    name: Check bundled Python bridges
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Byte-compile
+        run: python3 -m py_compile Integrations/Remote/agenthearth_remote.py Integrations/ClaudeCode/agenthearth_hook.py Integrations/Codex/agenthearth_hook.py
