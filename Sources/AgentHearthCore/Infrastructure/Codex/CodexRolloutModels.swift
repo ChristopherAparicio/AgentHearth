@@ -46,6 +46,10 @@ struct CodexRolloutSummary {
     let lastLifecycleReason: String?
     let lastLifecycleAt: Date?
     let latestTokenRecord: (Date, CodexTokenInfo, CodexRateLimits?)?
+    /// Every rate-limit report in the file, not just the last one: a rollout can
+    /// carry several quota families, and keeping only the newest would hide the
+    /// one actually constraining the account.
+    let quotaReports: [(Date, CodexRateLimits)]
     let cacheEvidence: CacheEvidenceAccumulator
 }
 
@@ -59,7 +63,7 @@ struct CachedRolloutSummary {
 
 struct ParsedRollout {
     let session: AgentSession?
-    let usage: MeasuredUsage?
+    let usage: [MeasuredUsage]
     let modifiedAt: Date
 }
 

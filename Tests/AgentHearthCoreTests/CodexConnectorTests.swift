@@ -5,6 +5,36 @@ import XCTest
 @testable import AgentHearthInfrastructure
 
 final class CodexConnectorTests: XCTestCase {
+    func testSurfacesTheMostConstrainingQuotaFamilyAndDropsResetWindows() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let rollout = root.appending(path: "2026/09/02/rollout-quotas.jsonl")
+        try FileManager.default.createDirectory(at: rollout.deletingLastPathComponent(), withIntermediateDirectories: true)
+
+        // Codex can report several quota families at once. Here the older
+        // family sits at 99% while a newer one — reported later — reads 0%,
+        // and the newer family's 5h window has already reset.
+        let contents = """
+        {"timestamp":"1970-01-01T00:33:10.000Z","type":"session_meta","payload":{"id":"codex-1","cwd":"/tmp/AgentHearth","source":"cli","model_provider":"openai"}}
+        {"timestamp":"1970-01-01T00:33:19.000Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":1200,"cached_input_tokens":1000}},"rate_limits":{"limit_id":"codex","primary":{"used_percent":99,"window_minutes":10080,"resets_at":9000}}}}
+        {"timestamp":"1970-01-01T00:33:20.000Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":1300,"cached_input_tokens":1100}},"rate_limits":{"limit_id":"codex_bengalfox","primary":{"used_percent":0,"window_minutes":300,"resets_at":1500},"secondary":{"used_percent":0,"window_minutes":10080,"resets_at":9500}}}}
+        """
+        try Data(contents.utf8).write(to: rollout)
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 1_999)], ofItemAtPath: rollout.path)
+
+        let connector = CodexConnector(sessionsURL: root, now: { Date(timeIntervalSince1970: 2_000) })
+        let snapshot = try await connector.snapshot()
+
+        // The 7-day window keeps the binding 99% (with its own reset), instead
+        // of the newer family's 0% that would read as "quota free".
+        let sevenDays = try XCTUnwrap(snapshot.usageWindows.first { $0.label == "7 days" })
+        XCTAssertEqual(sevenDays.usedFraction, 0.99, accuracy: 0.0001)
+        XCTAssertEqual(sevenDays.resetsAt, Date(timeIntervalSince1970: 9_000))
+        // The 5h window reset at t=1500, before "now" (2000), so its stale
+        // reading is dropped rather than presented as the current period.
+        XCTAssertNil(snapshot.usageWindows.first { $0.label == "5 hours" })
+    }
+
     func testReadsWorkingSessionCacheAndQuotaFromRollout() async throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }

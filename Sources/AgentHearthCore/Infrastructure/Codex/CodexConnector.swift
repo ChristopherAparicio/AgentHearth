@@ -79,7 +79,7 @@ public actor CodexConnector: ProviderConnector {
             }
         }
         let sessions = sessionsByID.values.sortedWorkingFirst()
-        let newestUsage = parsed.compactMap(\.usage).max { $0.measuredAt < $1.measuredAt }
+        let usageWindows = bindingUsageWindows(parsed.flatMap(\.usage))
         let hasRealtimeData = sourceMode.usesRealtimeData && !hookEventsBySession.isEmpty
         let connected = (sourceMode.usesLocalData && hasLocalStore) || hasRealtimeData
         let latestHookAt = hookEventsBySession.values
@@ -91,7 +91,7 @@ public actor CodexConnector: ProviderConnector {
             id: providerID,
             connectionState: connected ? .connected : .unavailable,
             sessions: sessions,
-            usageWindows: newestUsage?.windows ?? [],
+            usageWindows: usageWindows,
             updatedAt: updatedAt == .distantPast ? now() : updatedAt
         )
     }
@@ -153,7 +153,7 @@ public actor CodexConnector: ProviderConnector {
 
         return ParsedRollout(
             session: session,
-            usage: summary.latestTokenRecord.flatMap { makeUsage(rateLimits: $0.2, measuredAt: $0.0) },
+            usage: summary.quotaReports.compactMap { makeUsage(rateLimits: $0.1, measuredAt: $0.0) },
             modifiedAt: candidate.modifiedAt
         )
     }
@@ -193,6 +193,7 @@ public actor CodexConnector: ProviderConnector {
         var lastLifecycleReason: String?
         var lastLifecycleAt: Date?
         var latestTokenRecord: (Date, CodexTokenInfo, CodexRateLimits?)?
+        var quotaReports: [(Date, CodexRateLimits)] = []
         var cacheEvidence = CacheEvidenceAccumulator(
             policy: .init(eligibilityWindow: .previousTurn, tokenTotals: .always)
         )
@@ -215,6 +216,9 @@ public actor CodexConnector: ProviderConnector {
                 }
                 if event == "token_count", let info = record.payload?.info, let timestamp {
                     latestTokenRecord = (timestamp, info, record.payload?.rateLimits)
+                    if let rateLimits = record.payload?.rateLimits {
+                        quotaReports.append((timestamp, rateLimits))
+                    }
                     if let observation = Self.evidenceObservation(
                         for: info.lastTokenUsage,
                         at: timestamp,
@@ -236,6 +240,7 @@ public actor CodexConnector: ProviderConnector {
             lastLifecycleReason: lastLifecycleReason,
             lastLifecycleAt: lastLifecycleAt,
             latestTokenRecord: latestTokenRecord,
+            quotaReports: quotaReports,
             cacheEvidence: cacheEvidence
         )
     }
@@ -367,6 +372,30 @@ public actor CodexConnector: ProviderConnector {
     private func pruneHookEvents() {
         let cutoff = Int64(now().addingTimeInterval(-hookFreshness).timeIntervalSince1970 * 1_000)
         hookEventsBySession = hookEventsBySession.filter { $0.value.sentAt >= cutoff }
+    }
+
+    /// Codex reports several quota families side by side (`limit_id`, e.g. an
+    /// account migrated to a new plan bucket), each with its own windows. Taking
+    /// only the newest event let a fresh 0% from one family hide another family
+    /// sitting at 99% — the limit actually blocking the user. Per window, keep
+    /// the most constraining measurement across families, and drop windows whose
+    /// reset time has passed: those have rolled over, so their last reading no
+    /// longer describes the current period.
+    private func bindingUsageWindows(_ measurements: [MeasuredUsage]) -> [UsageWindow] {
+        let currentTime = now()
+        var byWindow: [String: UsageWindow] = [:]
+        for window in measurements.flatMap(\.windows) {
+            if let resetsAt = window.resetsAt, resetsAt <= currentTime { continue }
+            guard let existing = byWindow[window.id] else {
+                byWindow[window.id] = window
+                continue
+            }
+            // Higher utilization wins; on a tie the more recent reading does.
+            if (window.usedFraction, window.measuredAt) > (existing.usedFraction, existing.measuredAt) {
+                byWindow[window.id] = window
+            }
+        }
+        return byWindow.values.sorted { $0.id < $1.id }
     }
 
     private func makeUsage(rateLimits: CodexRateLimits?, measuredAt: Date) -> MeasuredUsage? {
