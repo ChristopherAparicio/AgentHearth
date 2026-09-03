@@ -182,10 +182,19 @@ public actor ClaudeCodeConnector: ProviderConnector, AccountUsageIngesting {
             }
         }
 
-        let ordered: [(id: String, label: String)] = [
+        var ordered: [(id: String, label: String)] = [
             ("claude-5h", "5 hours"),
             ("claude-7d", "7 days"),
         ]
+        if let account = freshAccountUsage() {
+            for scoped in account.scopedWeekly {
+                let id = "claude-7d-\(scoped.id)"
+                add(id, scoped.window.utilizationFraction, account.fetchedAt, scoped.window.resetsAt)
+                // Labeled by model alone: the bar sits right under "7 days", so
+                // repeating the period would only add noise.
+                ordered.append((id, scoped.label))
+            }
+        }
         return ordered.compactMap { meta in
             guard let contributions = byID[meta.id],
                   let freshest = contributions.max(by: { $0.measuredAt < $1.measuredAt })

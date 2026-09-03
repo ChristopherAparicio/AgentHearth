@@ -4,6 +4,31 @@ import XCTest
 @testable import AgentHearthInfrastructure
 
 final class ClaudeAccountUsageTests: XCTestCase {
+    func testDecodesPerModelWeeklyLimits() throws {
+        let body = """
+        {"five_hour":{"utilization":32,"resets_at":"2026-09-03T10:00:00.000000Z"},
+         "seven_day":{"utilization":51,"resets_at":"2026-09-07T00:00:00.000000Z"},
+         "limits":[
+           {"kind":"weekly_scoped","percent":73,"resets_at":"2026-09-07T00:00:00.000000Z","is_active":true,"scope":{"model":{"display_name":"Fable"}}},
+           {"kind":"weekly","percent":51,"resets_at":"2026-09-07T00:00:00.000000Z"},
+           {"kind":"weekly_scoped","percent":10,"scope":{"model":{"display_name":""}}}
+         ]}
+        """
+        let usage = try XCTUnwrap(ClaudeAccountUsageDecoder.decode(Data(body.utf8), fetchedAt: .now))
+
+        // Only the named, model-scoped weekly entry becomes a window: the
+        // account-wide "weekly" kind is already covered by seven_day, and an
+        // unnamed model cannot be labeled.
+        XCTAssertEqual(usage.scopedWeekly.count, 1)
+        let fable = try XCTUnwrap(usage.scopedWeekly.first)
+        XCTAssertEqual(fable.id, "fable")
+        XCTAssertEqual(fable.label, "Fable")
+        XCTAssertEqual(fable.window.utilizationFraction, 0.73, accuracy: 0.0001)
+        XCTAssertNotNil(fable.window.resetsAt)
+        XCTAssertTrue(fable.isActive)
+        XCTAssertEqual(try XCTUnwrap(usage.sevenDay).utilizationFraction, 0.51, accuracy: 0.0001)
+    }
+
     // Trimmed to the fields AgentHearth reads, from a real /api/oauth/usage body.
     private let sample = """
     {

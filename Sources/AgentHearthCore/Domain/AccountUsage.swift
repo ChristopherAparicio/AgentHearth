@@ -14,13 +14,38 @@ public struct AccountUsage: Equatable, Sendable {
         }
     }
 
+    /// A weekly window scoped to one model. Providers increasingly bill some
+    /// models against their own weekly allowance, and that scoped limit is
+    /// often the binding one — so it deserves its own bar rather than being
+    /// folded into the account-wide window.
+    public struct ScopedWindow: Equatable, Sendable, Identifiable {
+        public let id: String
+        public let label: String
+        public let window: Window
+        public let isActive: Bool
+
+        public init(id: String, label: String, window: Window, isActive: Bool) {
+            self.id = id
+            self.label = label
+            self.window = window
+            self.isActive = isActive
+        }
+    }
+
     public let fiveHour: Window?
     public let sevenDay: Window?
+    public let scopedWeekly: [ScopedWindow]
     public let fetchedAt: Date
 
-    public init(fiveHour: Window?, sevenDay: Window?, fetchedAt: Date) {
+    public init(
+        fiveHour: Window?,
+        sevenDay: Window?,
+        scopedWeekly: [ScopedWindow] = [],
+        fetchedAt: Date
+    ) {
         self.fiveHour = fiveHour
         self.sevenDay = sevenDay
+        self.scopedWeekly = scopedWeekly
         self.fetchedAt = fetchedAt
     }
 }
