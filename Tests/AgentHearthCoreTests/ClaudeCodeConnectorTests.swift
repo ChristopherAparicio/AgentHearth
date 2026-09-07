@@ -364,6 +364,41 @@ final class ClaudeCodeConnectorTests: XCTestCase {
         XCTAssertNil(snapshot.usageWindows.first?.resetsAt)
     }
 
+    /// Account usage ages out far sooner than transcripts do: a per-model bar
+    /// that can no longer be refreshed must not sit frozen beside live
+    /// percentages, which is how a three-day-old figure once read as current.
+    func testAccountUsageAgesOutWellBeforeTheGeneralRelevanceWindow() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let journal = root.appending(path: "plan-usage-history.json")
+        // Journal sample is fresh, so the global windows survive on their own.
+        try Data("""
+        {"version":2,"samples":[{"t":86300000,"org":"org-1","u":{"fh":26,"sd":17}}]}
+        """.utf8).write(to: journal)
+
+        let now = Date(timeIntervalSince1970: 86_400)
+        let connector = ClaudeCodeConnector(
+            projectsURL: root,
+            planUsageHistoryURL: journal,
+            now: { now }
+        )
+        // Four hours old: still well inside the seven-day general window, but
+        // past the account-usage one.
+        await connector.ingestAccountUsage(AccountUsage(
+            fiveHour: .init(utilizationFraction: 0.25, resetsAt: now.addingTimeInterval(3_600)),
+            sevenDay: .init(utilizationFraction: 0.16, resetsAt: now.addingTimeInterval(7_200)),
+            scopedWeekly: [
+                .init(id: "fable", label: "Fable", window: .init(utilizationFraction: 0.96, resetsAt: nil), isActive: true),
+            ],
+            fetchedAt: now.addingTimeInterval(-4 * 60 * 60)
+        ))
+        let snapshot = try await connector.snapshot()
+
+        XCTAssertEqual(snapshot.usageWindows.map(\.id), ["claude-5h", "claude-7d"], "the stale per-model window is gone")
+        XCTAssertNil(snapshot.usageWindows.first?.resetsAt, "and so is its stale reset")
+        XCTAssertEqual(snapshot.usageWindows.first?.usedFraction ?? 0, 0.26, accuracy: 0.0001, "while the live journal percentage stays")
+    }
+
     func testUnchangedDesktopJournalIsDecodedOnlyOnceAcrossPolls() async throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
