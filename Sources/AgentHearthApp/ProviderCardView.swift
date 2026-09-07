@@ -4,6 +4,8 @@ import SwiftUI
 struct UsageHint {
     let text: String
     let actionTitle: String
+    /// Tooltip for a reset cell left without a value while this hint stands.
+    let missingResetReason: String
     let action: () -> Void
 }
 
@@ -219,11 +221,30 @@ struct ProviderCardView: View {
                     }
                     .foregroundStyle(.secondary)
                     .help("\(window.label) resets in \(countdown.text) — \(resetsAt.formatted(date: .abbreviated, time: .shortened))")
+                } else {
+                    // An empty cell reads as "this window has no reset"; a dash
+                    // says the value is missing, and the tooltip says why.
+                    Text("—")
+                        .foregroundStyle(.tertiary)
+                        .help(missingResetHelp)
                 }
             }
             .font(.caption2)
             .frame(width: usageResetDisplay == .dateTime ? 74 : 58, alignment: .trailing)
         }
+    }
+
+    /// Why a reset is missing: the standing hint names the fault when there is
+    /// one. Otherwise nothing is wrong — Anthropic sends a reset instant only
+    /// for a window that is in use, and among the per-model weekly limits only
+    /// for the one it currently treats as binding. A limit sitting at zero, or
+    /// one another model is binding ahead of, simply arrives without a time.
+    private var missingResetHelp: String {
+        guard let usageHint else {
+            return "No reset time reported — Anthropic sends one only for a window in use, "
+                + "and for the per-model limit it currently treats as binding"
+        }
+        return "Reset time unavailable — \(usageHint.missingResetReason)"
     }
 
     /// "14:30" when the reset falls today, "Sat 14:30" within the week,

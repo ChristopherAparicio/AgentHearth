@@ -1,4 +1,5 @@
 import AgentHearthCore
+import AppKit
 import Foundation
 
 extension AppModel {
@@ -90,22 +91,37 @@ extension AppModel {
         sessionFocus.pinAll(warmCacheSessions.filter { $0.providerID == providerID })
     }
 
-    /// Whether the Claude usage windows lack reset times because the account
-    /// fetch has no usable sign-in: the case the "refresh sign-in" action fixes.
-    var claudeUsageNeedsSignInRefresh: Bool {
-        accountUsagePoller.isEnabled && accountUsagePoller.needsSignInRefresh
+    /// What the user has to do before the Claude reset times can come back,
+    /// or nil while the account fetch is healthy.
+    var claudeUsageRemedy: AccountUsageRemedy? {
+        accountUsagePoller.isEnabled ? accountUsagePoller.remedy : nil
     }
 
-    /// Opens Claude Code in Terminal — it refreshes its OAuth token on launch —
-    /// and schedules a prompt re-fetch of the account usage.
-    func refreshClaudeSignIn() {
+    /// Carries out whatever the current fault actually calls for. The three
+    /// faults need three different gestures, and offering only the middle one
+    /// — launching the CLI — is why a signed-out account used to look
+    /// unfixable: a bare launch re-authenticates nothing.
+    func resolveClaudeUsageRemedy() {
+        guard let remedy = claudeUsageRemedy else { return }
         sessionOpeningError = nil
-        accountUsagePoller.expectSignInRefresh()
-        Task {
-            do {
-                try await sessionOpener.openProviderCLI(.claudeCode)
-            } catch {
-                sessionOpeningError = error.localizedDescription
+        switch remedy {
+        case .allowKeychainAccess:
+            // The consent dialog only appears for the active app, so come
+            // forward before asking for the token again.
+            NSApplication.shared.activate(ignoringOtherApps: true)
+            retryClaudeUsageFetch()
+        case .signIn, .refreshToken:
+            accountUsagePoller.expectSignInRefresh()
+            Task {
+                do {
+                    if remedy == .signIn {
+                        try await sessionOpener.openProviderSignIn(.claudeCode)
+                    } else {
+                        try await sessionOpener.openProviderCLI(.claudeCode)
+                    }
+                } catch {
+                    sessionOpeningError = error.localizedDescription
+                }
             }
         }
     }

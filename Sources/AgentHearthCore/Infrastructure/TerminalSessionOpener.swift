@@ -48,6 +48,17 @@ enum ProviderCLI {
         }
     }
 
+    /// Arguments that make the provider CLI start an interactive sign-in.
+    /// Empty when the CLI has no such subcommand, in which case launching it
+    /// bare is the closest thing available.
+    static func signInArguments(for providerID: AgentProviderID) -> [String] {
+        switch providerID {
+        case .claudeCode: ["auth", "login"]
+        case .codex: ["login"]
+        case .openCode: []
+        }
+    }
+
     static func resumeArguments(for providerID: AgentProviderID, sessionID: String) -> [String] {
         switch providerID {
         case .codex: ["resume", sessionID]
@@ -264,10 +275,21 @@ public actor TerminalSessionOpener: SessionOpening {
     }
 
     /// Runs the provider CLI with no arguments in a new Terminal tab. Used to
-    /// let Claude Code refresh an expired OAuth token, which it does on launch.
+    /// let Claude Code refresh a lapsed OAuth token, which it does on launch.
     public func openProviderCLI(_ providerID: AgentProviderID) async throws {
+        try runCLI(providerID, arguments: [])
+    }
+
+    /// Runs the provider's sign-in subcommand in a new Terminal tab. Falls back
+    /// to a bare launch for a CLI that has no such subcommand.
+    public func openProviderSignIn(_ providerID: AgentProviderID) async throws {
+        try runCLI(providerID, arguments: ProviderCLI.signInArguments(for: providerID))
+    }
+
+    private func runCLI(_ providerID: AgentProviderID, arguments: [String]) throws {
         let executable = try executableURL(for: providerID)
-        try launchAppleScript(Self.terminalRunScript, arguments: ["exec \(Shell.quoted(executable.path))"])
+        let invocation = ([Shell.quoted(executable.path)] + arguments.map(Shell.quoted)).joined(separator: " ")
+        try launchAppleScript(Self.terminalRunScript, arguments: ["exec \(invocation)"])
     }
 
     private func openInProviderApp(_ target: SessionTarget) throws {
