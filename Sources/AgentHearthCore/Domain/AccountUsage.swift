@@ -58,9 +58,24 @@ public struct AccountUsage: Equatable, Sendable {
 
 /// Outcome of asking a provider's service for account usage, so consumers can
 /// distinguish credential problems (user-fixable) from transient failures.
+///
+/// The three credential cases are kept apart because they need three different
+/// gestures from the user: signing in again, letting the CLI refresh itself,
+/// and approving a Keychain dialog. Collapsing them into one "refresh your
+/// sign-in" message sends people to fix the wrong thing.
 public enum AccountUsageFetchOutcome: Sendable {
     case usage(AccountUsage)
-    case tokenMissing
+    /// No usable sign-in exists: either nothing is stored at all, or every
+    /// stored record is a logged-out husk — Claude Code blanks the token
+    /// strings on logout — with no live refresh token to revive it. Only
+    /// signing in again fixes this.
+    case signedOut
+    /// A stored access token has lapsed, but a live refresh token means the
+    /// CLI can mint a new one by itself the next time it runs.
     case tokenExpired
+    /// macOS refused to hand over the Keychain data: the consent dialog was
+    /// declined, or could not be shown. The sign-in itself may be perfectly
+    /// fine.
+    case keychainAccessDenied
     case failed(String)
 }

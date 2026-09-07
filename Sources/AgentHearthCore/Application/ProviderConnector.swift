@@ -22,12 +22,21 @@ public protocol AccountUsageIngesting: Sendable {
 public protocol SessionOpening: Sendable {
     func open(_ target: SessionTarget, destination: SessionOpenDestination) async throws
     /// Starts the provider's CLI in a fresh terminal with no session to resume,
-    /// e.g. so Claude Code refreshes its sign-in on launch.
+    /// e.g. so Claude Code refreshes a lapsed token, which it does on launch.
     func openProviderCLI(_ providerID: AgentProviderID) async throws
+    /// Starts the provider's interactive sign-in (`claude auth login`). This is
+    /// a different gesture from ``openProviderCLI(_:)``: launching the CLI bare
+    /// re-authenticates nothing once the account is signed out, it only drops
+    /// the user at a prompt.
+    func openProviderSignIn(_ providerID: AgentProviderID) async throws
 }
 
 public extension SessionOpening {
     func openProviderCLI(_ providerID: AgentProviderID) async throws {
+        throw SessionOpeningUnsupportedError(providerID: providerID)
+    }
+
+    func openProviderSignIn(_ providerID: AgentProviderID) async throws {
         throw SessionOpeningUnsupportedError(providerID: providerID)
     }
 }

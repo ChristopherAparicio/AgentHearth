@@ -28,20 +28,10 @@ final class ProviderFormatContractTests: XCTestCase {
     func testClaudeKeychainStillExposesACredentialProfile() throws {
         // Attributes only, never `kSecReturnData`: enumerating does not raise
         // the consent dialog, so this stays runnable in an automated suite.
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecReturnAttributes as String: true,
-            kSecMatchLimit as String: kSecMatchLimitAll,
-        ]
-        var result: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let items = result as? [[String: Any]]
-        else { throw XCTSkip("No readable generic passwords on this machine") }
-
-        let services = items.compactMap { $0[kSecAttrService as String] as? String }
-        guard services.contains(where: { $0.hasPrefix(ClaudeAccountUsageFetcher.keychainServicePrefix) })
-        else {
-            throw XCTSkip("Claude is not signed in on this machine")
+        // Exercised through the production store rather than a copy of its
+        // query, so drift in either the prefix or the scan is caught here.
+        guard !KeychainClaudeCredentialStore().services().isEmpty else {
+            throw XCTSkip("No Claude Code credential items on this machine")
         }
         // Reaching here is the contract: at least one item still carries the
         // prefix the fetcher scans for. Claude Code 2.1 moved the token into

@@ -11,6 +11,20 @@ protocol AccountUsageFetching: Sendable {
 
 extension ClaudeAccountUsageFetcher: AccountUsageFetching {}
 
+/// The single gesture that will bring reset times back. Three cases rather than
+/// one because they call for opposite actions, and the wrong advice here is
+/// worse than none: telling someone to "open Claude Code" when their account is
+/// signed out sends them to a button that cannot possibly help.
+enum AccountUsageRemedy: Equatable {
+    /// No usable sign-in anywhere: only an interactive `claude auth login` helps.
+    case signIn
+    /// A lapsed access token with a live refresh token behind it — running the
+    /// CLI once is enough, it refreshes on launch.
+    case refreshToken
+    /// macOS refused the Keychain read; the sign-in itself may be fine.
+    case allowKeychainAccess
+}
+
 /// Owns the opt-in Anthropic account-usage polling: the enablement
 /// preference, the user-facing fetch status, and the backoff schedule.
 /// Successful fetches are handed to the injected `ingest` closure, which the
@@ -32,10 +46,14 @@ final class AccountUsagePoller {
         }
     }
     var status: String?
-    /// True after the last fetch found no usable token: the user has to run
-    /// Claude Code once so it refreshes its sign-in.
-    private(set) var needsSignInRefresh = false
+    /// Set when the last fetch failed on credentials, naming what the user has
+    /// to do. Nil while usage is flowing, and after a merely transient failure.
+    private(set) var remedy: AccountUsageRemedy?
     private var nextFetchAt: Date = .distantPast
+    /// While a sign-in the user just started is still plausibly in flight,
+    /// credential failures retry in seconds rather than minutes — a half-hour
+    /// backoff would strand someone who finished logging in two minutes ago.
+    private var signInGraceUntil: Date = .distantPast
     /// The last successful fetch, kept so toggling the scoped-limits
     /// preference re-applies immediately without another network call.
     private var lastUsage: AccountUsage?
@@ -66,12 +84,15 @@ final class AccountUsagePoller {
         nextFetchAt = .distantPast
     }
 
-    /// After the user launched Claude Code to refresh its token: give it a
-    /// moment to sign in, then fetch again without waiting out the backoff.
+    /// After the user launched Claude Code or its sign-in: fetch again shortly,
+    /// and keep retrying quickly for a few minutes so a login that takes a
+    /// browser round-trip is picked up as soon as it lands.
     func expectSignInRefresh() {
         guard isEnabled else { return }
-        nextFetchAt = Date().addingTimeInterval(20)
-        status = "Waiting for Claude Code to refresh its sign-in…"
+        let now = Date()
+        nextFetchAt = now.addingTimeInterval(30)
+        signInGraceUntil = now.addingTimeInterval(5 * 60)
+        status = "Waiting for the Claude sign-in to complete…"
     }
 
     init(fetcher: any AccountUsageFetching, preferences: PreferencesStore) {
@@ -94,6 +115,7 @@ final class AccountUsagePoller {
             Task { await refreshIfNeeded() }
         } else {
             status = nil
+            remedy = nil
             lastUsage = nil
             Task { await ingest(nil) }
         }
@@ -104,43 +126,68 @@ final class AccountUsagePoller {
     /// with reset timestamps — into the Claude connector.
     func refreshIfNeeded() async {
         guard isEnabled, Date() >= nextFetchAt else { return }
-        let outcome = await fetcher.fetch()
-        switch outcome {
-        case .tokenExpired, .tokenMissing: needsSignInRefresh = true
-        case .usage, .failed: needsSignInRefresh = false
-        }
-        switch outcome {
+        switch await fetcher.fetch() {
         case let .usage(usage):
+            remedy = nil
+            signInGraceUntil = .distantPast
             lastUsage = usage
             await ingest(applyingPreferences(to: usage))
             status = "Updated \(usage.fetchedAt.formatted(date: .omitted, time: .shortened))"
-            // Re-fetch shortly after the soonest window resets (the 5h can lapse
-            // between two-hour polls), but never sooner than 5 min nor later
-            // than 2 h. A window that already lapsed, or that Anthropic reports
-            // without a reset (a 5h window with no usage yet reports
-            // `resets_at: null`), is re-polled at the 5 min floor so the reset
-            // shows up as soon as the window is in use instead of up to two
-            // hours later.
-            let now = Date()
-            let windows = [usage.fiveHour, usage.sevenDay].compactMap { $0 }
-            let soonestReset = windows.compactMap(\.resetsAt).filter { $0 > now }.min()
-            let hasLapsedOrUnknownReset = windows.contains { window in
-                window.resetsAt.map { $0 <= now } ?? true
-            }
-            let twoHours = now.addingTimeInterval(2 * 60 * 60)
-            let candidate = hasLapsedOrUnknownReset
-                ? now
-                : soonestReset.map { $0.addingTimeInterval(60) } ?? twoHours
-            nextFetchAt = max(now.addingTimeInterval(5 * 60), min(twoHours, candidate))
+            nextFetchAt = nextFetchAfter(usage)
+        case .signedOut:
+            await withdrawUsage(remedy: .signIn)
+            status = "Not signed in — run `claude auth login` in a terminal"
+            nextFetchAt = backoff(normally: 30 * 60)
         case .tokenExpired:
+            await withdrawUsage(remedy: .refreshToken)
             status = "Claude sign-in expired — run Claude Code once to refresh it"
-            nextFetchAt = Date().addingTimeInterval(10 * 60)
-        case .tokenMissing:
-            status = "No Claude sign-in found in the Keychain — run Claude Code and sign in"
-            nextFetchAt = Date().addingTimeInterval(30 * 60)
+            nextFetchAt = backoff(normally: 10 * 60)
+        case .keychainAccessDenied:
+            await withdrawUsage(remedy: .allowKeychainAccess)
+            status = "Keychain access refused — allow the Claude Code credentials item"
+            nextFetchAt = backoff(normally: 10 * 60)
         case let .failed(message):
+            // Transient: the credentials are fine, so the last usage stays on
+            // screen until it ages out of the connector's freshness window.
+            remedy = nil
             status = "Couldn't fetch usage: \(message)"
-            nextFetchAt = Date().addingTimeInterval(10 * 60)
+            nextFetchAt = backoff(normally: 10 * 60)
         }
+    }
+
+    /// Takes the last fetched usage back off screen. A credential fault cannot
+    /// repair itself, so those numbers will never be refreshed again; leaving
+    /// them up shows a frozen per-model bar beside live percentages with
+    /// nothing to say it stopped moving.
+    private func withdrawUsage(remedy newRemedy: AccountUsageRemedy) async {
+        remedy = newRemedy
+        guard lastUsage != nil else { return }
+        lastUsage = nil
+        await ingest(nil)
+    }
+
+    private func backoff(normally interval: TimeInterval) -> Date {
+        let now = Date()
+        return now.addingTimeInterval(now < signInGraceUntil ? 30 : interval)
+    }
+
+    /// Re-fetch shortly after the soonest window resets (the 5h can lapse
+    /// between two-hour polls), but never sooner than 5 min nor later than 2 h.
+    /// A window that already lapsed, or that Anthropic reports without a reset
+    /// (a 5h window with no usage yet reports `resets_at: null`), is re-polled
+    /// at the 5 min floor so the reset shows up as soon as the window is in use
+    /// instead of up to two hours later.
+    private func nextFetchAfter(_ usage: AccountUsage) -> Date {
+        let now = Date()
+        let windows = [usage.fiveHour, usage.sevenDay].compactMap { $0 }
+        let soonestReset = windows.compactMap(\.resetsAt).filter { $0 > now }.min()
+        let hasLapsedOrUnknownReset = windows.contains { window in
+            window.resetsAt.map { $0 <= now } ?? true
+        }
+        let twoHours = now.addingTimeInterval(2 * 60 * 60)
+        let candidate = hasLapsedOrUnknownReset
+            ? now
+            : soonestReset.map { $0.addingTimeInterval(60) } ?? twoHours
+        return max(now.addingTimeInterval(5 * 60), min(twoHours, candidate))
     }
 }

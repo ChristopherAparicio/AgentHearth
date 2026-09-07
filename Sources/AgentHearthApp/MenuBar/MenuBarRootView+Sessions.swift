@@ -134,12 +134,15 @@ extension MenuBarRootView {
             isPinned: model.sessionFocus.isPinned,
             onTogglePin: { model.sessionFocus.togglePin($0) },
             onPinWarmCacheSessions: { model.pinWarmCacheSessions(for: snapshot.id) },
-            usageHint: snapshot.id == .claudeCode && model.claudeUsageNeedsSignInRefresh
-                ? UsageHint(
-                    text: "Reset times need a fresh Claude sign-in",
-                    actionTitle: "Open Claude Code",
-                    action: { model.refreshClaudeSignIn() }
-                )
+            usageHint: snapshot.id == .claudeCode
+                ? model.claudeUsageRemedy.map { remedy in
+                    UsageHint(
+                        text: remedy.summary,
+                        actionTitle: remedy.actionTitle,
+                        missingResetReason: remedy.missingResetReason,
+                        action: { model.resolveClaudeUsageRemedy() }
+                    )
+                }
                 : nil,
             usageResetDisplay: model.usageResetDisplay,
             showsCacheIcon: model.showsSessionCacheIcon,

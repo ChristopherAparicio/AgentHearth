@@ -153,19 +153,24 @@ struct ClaudeUsageSettingsSection: View {
                     .foregroundStyle(.secondary)
 
                 HStack {
-                    Button {
-                        model.refreshClaudeSignIn()
-                    } label: {
-                        Label("Open Claude Code to Refresh Sign-in", systemImage: "terminal")
+                    // Only the action that fits the current fault is offered:
+                    // a bare CLI launch cannot help a signed-out account, and
+                    // showing it anyway is what used to send people in circles.
+                    if let remedy = model.claudeUsageRemedy {
+                        Button {
+                            model.resolveClaudeUsageRemedy()
+                        } label: {
+                            Label(remedy.actionTitle, systemImage: remedy.actionSymbol)
+                        }
+                        .help(remedy.actionHelp)
                     }
-                    .help("Runs `claude` in Terminal; Claude Code refreshes its token on launch, then usage is fetched again")
 
                     Button("Retry Now") {
                         model.retryClaudeUsageFetch()
                     }
                 }
-                if model.claudeUsageNeedsSignInRefresh {
-                    Label("Reset times are missing until the sign-in is refreshed.", systemImage: "exclamationmark.triangle")
+                if let remedy = model.claudeUsageRemedy {
+                    Label(remedy.explanation, systemImage: "exclamationmark.triangle")
                         .font(.caption)
                         .foregroundStyle(.orange)
                 }

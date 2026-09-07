@@ -33,6 +33,22 @@ final class StubURLProtocol: URLProtocol {
     }
 }
 
+/// Stands in for the Keychain so the credential classification can be driven
+/// from fixed stores, in the order a real sweep would see them.
+private struct StubCredentialStore: ClaudeCredentialStoreReading {
+    /// Service name to what opening it yields, newest store first.
+    var items: [(service: String, read: ClaudeCredentialStoreRead)] = []
+    var fallback: Data?
+
+    func services() -> [String] { items.map(\.service) }
+
+    func read(service: String) -> ClaudeCredentialStoreRead {
+        items.first { $0.service == service }?.read ?? .missing
+    }
+
+    func fallbackStore() -> Data? { fallback }
+}
+
 final class ClaudeAccountUsageFetcherTests: XCTestCase {
     private func makeFetcher() -> ClaudeAccountUsageFetcher {
         let config = URLSessionConfiguration.ephemeral
@@ -106,13 +122,118 @@ final class ClaudeAccountUsageFetcherTests: XCTestCase {
         XCTAssertEqual(credentials.expiresAt, Date(timeIntervalSince1970: 1_700_000_000))
     }
 
-    func testSelectsTheFreshestValidTokenAcrossStores() {
+    // MARK: - Telling a signed-out account from a refreshable one
+
+    /// The discriminator behind the three credential outcomes: only a refresh
+    /// token that is present and unexpired means the CLI can recover on its own.
+    func testLiveRefreshTokenIsWhatSeparatesRefreshableFromSignedOut() {
         let now = Date(timeIntervalSince1970: 10_000)
-        let stale = ClaudeAccountUsageFetcher.Credentials(accessToken: "old", expiresAt: now.addingTimeInterval(-3_600))
-        let soon = ClaudeAccountUsageFetcher.Credentials(accessToken: "soon", expiresAt: now.addingTimeInterval(600))
-        let later = ClaudeAccountUsageFetcher.Credentials(accessToken: "later", expiresAt: now.addingTimeInterval(7_200))
-        XCTAssertEqual(ClaudeAccountUsageFetcher.selectFreshest([stale, soon, later], now: now)?.accessToken, "later")
-        XCTAssertEqual(ClaudeAccountUsageFetcher.selectFreshest([stale], now: now)?.accessToken, "old", "an expired token still reports as expired rather than missing")
-        XCTAssertNil(ClaudeAccountUsageFetcher.selectFreshest([], now: now))
+        func store(refreshToken: String, refreshExpiresAt: Int?) -> Data {
+            let expiry = refreshExpiresAt.map { ",\"refreshTokenExpiresAt\":\($0)" } ?? ""
+            return Data(#"{"claudeAiOauth":{"accessToken":"","refreshToken":"\#(refreshToken)"\#(expiry)}}"#.utf8)
+        }
+
+        XCTAssertTrue(
+            ClaudeAccountUsageFetcher.hasLiveRefreshToken(store(refreshToken: "r", refreshExpiresAt: 20_000_000), now: now),
+            "a refresh token expiring in the future can still mint an access token"
+        )
+        XCTAssertFalse(
+            ClaudeAccountUsageFetcher.hasLiveRefreshToken(store(refreshToken: "r", refreshExpiresAt: 5_000_000), now: now),
+            "a lapsed refresh token cannot"
+        )
+        XCTAssertFalse(
+            ClaudeAccountUsageFetcher.hasLiveRefreshToken(store(refreshToken: "", refreshExpiresAt: 20_000_000), now: now),
+            "the logged-out husk Claude Code leaves behind blanks both tokens"
+        )
+        XCTAssertFalse(
+            ClaudeAccountUsageFetcher.hasLiveRefreshToken(store(refreshToken: "r", refreshExpiresAt: nil), now: now),
+            "an unverifiable refresh token counts as unusable: pointing the user at a sign-in always works"
+        )
+        XCTAssertFalse(ClaudeAccountUsageFetcher.hasLiveRefreshToken(Data("not json".utf8), now: now))
+    }
+
+    // MARK: - Classification, end to end
+
+    private func makeFetcher(stores: StubCredentialStore) -> ClaudeAccountUsageFetcher {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [StubURLProtocol.self]
+        return ClaudeAccountUsageFetcher(
+            now: { Date(timeIntervalSince1970: 10_000) },
+            session: URLSession(configuration: config),
+            stores: stores
+        )
+    }
+
+    /// A husk in front of stores whose refresh tokens have also lapsed. This is
+    /// the shape that stranded a real account, and the one that used to be
+    /// reported as a mere expiry — sending the user to a button that could not
+    /// possibly help.
+    func testHuskOverLapsedStoresReportsSignedOut() async {
+        let outcome = await makeFetcher(stores: StubCredentialStore(items: [
+            ("Claude Code-credentials", .data(Self.husk)),
+            ("Claude Code-credentials-00000000000002", .data(Self.lapsedBeyondRefresh)),
+        ])).fetch()
+
+        guard case .signedOut = outcome else { return XCTFail("expected signedOut, got \(outcome)") }
+    }
+
+    /// The same lapsed access token, but with a refresh token still alive: the
+    /// CLI can recover on its own, so this must not ask for a new sign-in.
+    func testLapsedTokenWithLiveRefreshReportsExpired() async {
+        let outcome = await makeFetcher(stores: StubCredentialStore(items: [
+            ("Claude Code-credentials", .data(Self.lapsedButRefreshable)),
+        ])).fetch()
+
+        guard case .tokenExpired = outcome else { return XCTFail("expected tokenExpired, got \(outcome)") }
+    }
+
+    /// A refused read must not be reported as an absent sign-in: the account is
+    /// very possibly fine and only the Keychain dialog needs answering.
+    func testRefusedKeychainReadIsNotMistakenForBeingSignedOut() async {
+        let outcome = await makeFetcher(stores: StubCredentialStore(items: [
+            ("Claude Code-credentials", .denied),
+        ])).fetch()
+
+        guard case .keychainAccessDenied = outcome else {
+            return XCTFail("expected keychainAccessDenied, got \(outcome)")
+        }
+    }
+
+    /// The happy path, with the husk in front: a blanked store must be stepped
+    /// over rather than shadowing the live token in an older item.
+    func testLiveTokenBehindAHuskStillFetchesUsage() async {
+        StubURLProtocol.body = Data(#"{"five_hour":{"utilization":26,"resets_at":"2026-08-24T18:00:00Z"}}"#.utf8)
+        let outcome = await makeFetcher(stores: StubCredentialStore(items: [
+            ("Claude Code-credentials", .data(Self.husk)),
+            ("Claude Code-credentials-00000000000002", .data(Self.live)),
+        ])).fetch()
+
+        guard case let .usage(usage) = outcome else { return XCTFail("expected usage, got \(outcome)") }
+        XCTAssertEqual(usage.fiveHour?.utilizationFraction ?? 0, 0.26, accuracy: 0.0001)
+        XCTAssertEqual(StubURLProtocol.lastRequest?.value(forHTTPHeaderField: "Authorization"), "Bearer live-token")
+    }
+
+    /// Nothing stored at all is the same problem as a husk: sign in.
+    func testNoStoresAtAllReportsSignedOut() async {
+        let outcome = await makeFetcher(stores: StubCredentialStore()).fetch()
+        guard case .signedOut = outcome else { return XCTFail("expected signedOut, got \(outcome)") }
+    }
+
+    // Fixtures, in the shapes Claude Code actually writes. Clock is 10_000s.
+    private static let husk = Data(#"{"claudeAiOauth":{"accessToken":"","refreshToken":"","expiresAt":0,"refreshTokenExpiresAt":20000000}}"#.utf8)
+    private static let lapsedBeyondRefresh = Data(#"{"claudeAiOauth":{"accessToken":"stale","refreshToken":"r","expiresAt":5000000,"refreshTokenExpiresAt":5000000}}"#.utf8)
+    private static let lapsedButRefreshable = Data(#"{"claudeAiOauth":{"accessToken":"stale","refreshToken":"r","expiresAt":5000000,"refreshTokenExpiresAt":90000000}}"#.utf8)
+    private static let live = Data(#"{"claudeAiOauth":{"accessToken":"live-token","refreshToken":"r","expiresAt":90000000,"refreshTokenExpiresAt":90000000}}"#.utf8)
+
+    /// The exact shape that stranded a real account: the newest store is a
+    /// logged-out husk and every older store has lapsed past refresh, so the
+    /// only way back is a sign-in — not the "open Claude Code" advice.
+    func testSignedOutHuskBesideLapsedStoresOffersNoRefreshPath() {
+        let now = Date(timeIntervalSince1970: 10_000)
+        let husk = Data(#"{"claudeAiOauth":{"accessToken":"","refreshToken":"","expiresAt":0,"refreshTokenExpiresAt":20000000}}"#.utf8)
+        let lapsed = Data(#"{"claudeAiOauth":{"accessToken":"tok","refreshToken":"r","expiresAt":5000000,"refreshTokenExpiresAt":5000000}}"#.utf8)
+
+        XCTAssertNil(ClaudeAccountUsageFetcher.parseCredentials(husk))
+        XCTAssertFalse([husk, lapsed].contains { ClaudeAccountUsageFetcher.hasLiveRefreshToken($0, now: now) })
     }
 }

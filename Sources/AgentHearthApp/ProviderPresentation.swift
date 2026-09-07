@@ -171,3 +171,65 @@ extension AgentSession {
         return String(title.dropFirst(prefix.count))
     }
 }
+
+extension AccountUsageRemedy {
+    /// One line for the menu-bar card: what is wrong, in the user's terms.
+    var summary: String {
+        switch self {
+        case .signIn: "Reset times need a Claude sign-in"
+        case .refreshToken: "Reset times need a Claude token refresh"
+        case .allowKeychainAccess: "Reset times need Keychain access"
+        }
+    }
+
+    /// The button that actually fixes it. Named after the command it runs, so
+    /// nobody has to guess whether pressing it will help.
+    var actionTitle: String {
+        switch self {
+        case .signIn: "Run claude auth login"
+        case .refreshToken: "Open Claude Code"
+        case .allowKeychainAccess: "Ask Again"
+        }
+    }
+
+    /// The consequence, for the Settings warning line.
+    var explanation: String {
+        switch self {
+        case .signIn: "Reset times stay missing until the CLI is signed in again."
+        case .refreshToken: "Reset times stay missing until Claude Code refreshes its token."
+        case .allowKeychainAccess: "Reset times stay missing until the Keychain read is allowed."
+        }
+    }
+
+    /// Why a reset cell has no value while this fault stands. Names the cause
+    /// rather than repeating the banner, which is already on screen.
+    var missingResetReason: String {
+        switch self {
+        case .signIn: "Reset times come from Anthropic, and the Claude Code CLI is signed out."
+        case .refreshToken: "Reset times come from Anthropic, and the stored Claude token has lapsed."
+        case .allowKeychainAccess: "Reset times come from Anthropic, and macOS refused the Keychain read."
+        }
+    }
+
+    var actionSymbol: String {
+        switch self {
+        case .signIn, .refreshToken: "terminal"
+        case .allowKeychainAccess: "key"
+        }
+    }
+
+    /// Why that button, spelled out for the tooltip.
+    var actionHelp: String {
+        switch self {
+        case .signIn:
+            "Runs `claude auth login` in Terminal. The Claude Code CLI is signed out, "
+                + "and signing in to the desktop app does not sign in the CLI."
+        case .refreshToken:
+            "Runs `claude` in Terminal; Claude Code refreshes its lapsed token on launch, "
+                + "then usage is fetched again."
+        case .allowKeychainAccess:
+            "Asks macOS for the Claude Code credentials item again. Choose Always Allow "
+                + "so it is not asked on every launch."
+        }
+    }
+}
