@@ -8,6 +8,7 @@ public actor ClaudeCodeConnector: ProviderConnector, AccountUsageIngesting {
     private let projectsURL: URL
     private let planUsageHistoryURL: URL
     private let relevantAge: TimeInterval
+    private let accountUsageRelevantAge: TimeInterval
     private let hookFreshness: TimeInterval
     private let stuckAfter: TimeInterval
     private let now: @Sendable () -> Date
@@ -41,6 +42,7 @@ public actor ClaudeCodeConnector: ProviderConnector, AccountUsageIngesting {
         projectsURL: URL = ClaudeCodeConnector.defaultProjectsURL,
         planUsageHistoryURL: URL = PlanUsageHistoryReader.defaultURL,
         relevantAge: TimeInterval = 7 * 24 * 60 * 60,
+        accountUsageRelevantAge: TimeInterval = 3 * 60 * 60,
         hookFreshness: TimeInterval = 2 * 60 * 60,
         stuckAfter: TimeInterval = 15 * 60,
         now: @escaping @Sendable () -> Date = Date.init,
@@ -49,6 +51,7 @@ public actor ClaudeCodeConnector: ProviderConnector, AccountUsageIngesting {
         self.projectsURL = projectsURL
         self.planUsageHistoryURL = planUsageHistoryURL
         self.relevantAge = relevantAge
+        self.accountUsageRelevantAge = accountUsageRelevantAge
         self.hookFreshness = hookFreshness
         self.stuckAfter = stuckAfter
         self.now = now
@@ -221,9 +224,17 @@ public actor ClaudeCodeConnector: ProviderConnector, AccountUsageIngesting {
         }
     }
 
+    /// The injected account usage, but only while it can still be believed.
+    ///
+    /// The window is far tighter than `relevantAge` because this is the only
+    /// source whose numbers cannot be re-derived locally: once the poller stops
+    /// succeeding, a per-model weekly bar would otherwise sit frozen next to
+    /// live 5h/7d percentages for a week, reading as current. The poller
+    /// refreshes about every two hours, so anything older than three has
+    /// missed at least one round and is dropped.
     private func freshAccountUsage() -> AccountUsage? {
         guard let accountUsage,
-              accountUsage.fetchedAt >= now().addingTimeInterval(-relevantAge),
+              accountUsage.fetchedAt >= now().addingTimeInterval(-accountUsageRelevantAge),
               accountUsage.fetchedAt <= now()
         else { return nil }
         return accountUsage
