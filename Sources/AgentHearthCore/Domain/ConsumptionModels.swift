@@ -127,3 +127,35 @@ public struct ConsumptionSnapshot: Equatable, Sendable {
         sessions: []
     )
 }
+
+/// Decides whether a new usage reading is worth storing.
+///
+/// Readings arrive far faster than usage actually changes: Codex republishes a
+/// quota report every few seconds carrying a fresh timestamp and an unchanged
+/// figure, so timestamp-keyed deduplication keeps none of them out. Storing
+/// them all costs tens of thousands of identical rows a week per window and
+/// renders a trace of hundreds of flat points.
+public enum UsageSampleGranularity {
+    /// How long an unchanged figure may go unrecorded.
+    ///
+    /// Keeping only changes would be smaller still, but a plateau would then
+    /// collapse to its first reading, and the fastest-stretch rate would be
+    /// measured across the whole plateau instead of across the rise — turning
+    /// every burst into a gentle slope. The heartbeat brackets a rise to
+    /// within a minute.
+    public static let heartbeat: TimeInterval = 60
+
+    /// Providers report rounded percentages, so anything under this is
+    /// floating-point noise rather than a change.
+    static let changeEpsilon = 0.0005
+
+    public static func shouldStore(
+        fraction: Double,
+        measuredAt: Date,
+        lastFraction: Double,
+        lastMeasuredAt: Date
+    ) -> Bool {
+        if abs(fraction - lastFraction) > changeEpsilon { return true }
+        return measuredAt.timeIntervalSince(lastMeasuredAt) >= heartbeat
+    }
+}

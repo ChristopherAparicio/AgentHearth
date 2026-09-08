@@ -296,11 +296,50 @@ public actor HistoryStore {
         sqlite3_step(statement)
     }
 
+    /// The newest stored reading of one window, for the granularity decision.
+    /// Uses the table's primary key, whose leading columns are exactly this
+    /// window's identity.
+    private func latestUsageSample(
+        database: OpaquePointer,
+        providerID: AgentProviderID,
+        window: UsageWindow
+    ) -> (fraction: Double, measuredAt: Date)? {
+        let sql = """
+        SELECT used_fraction,measured_at_ms FROM usage_samples
+        WHERE provider=? AND window_id=? AND host_id=?
+        ORDER BY measured_at_ms DESC LIMIT 1
+        """
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK, let statement else { return nil }
+        defer { sqlite3_finalize(statement) }
+        bind(providerID.rawValue, to: statement, at: 1)
+        bind(window.id, to: statement, at: 2)
+        bind(window.host.id, to: statement, at: 3)
+        guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
+        return (
+            sqlite3_column_double(statement, 0),
+            Date(millisecondsSince1970: sqlite3_column_int64(statement, 1))
+        )
+    }
+
     private func insertUsageSample(
         database: OpaquePointer,
         providerID: AgentProviderID,
         window: UsageWindow
     ) {
+        if let latest = latestUsageSample(
+            database: database,
+            providerID: providerID,
+            window: window
+        ), !UsageSampleGranularity.shouldStore(
+            fraction: window.usedFraction,
+            measuredAt: window.measuredAt,
+            lastFraction: latest.fraction,
+            lastMeasuredAt: latest.measuredAt
+        ) {
+            return
+        }
+
         let sql = """
         INSERT OR IGNORE INTO usage_samples(
           provider,window_id,host_id,host_name,label,measured_at_ms,used_fraction

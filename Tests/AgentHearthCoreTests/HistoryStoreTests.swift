@@ -252,6 +252,37 @@ final class HistoryStoreTests: XCTestCase {
         XCTAssertTrue(consumption.timelines.isEmpty)
     }
 
+    func testCollapsesRepublishedReadingsButKeepsAHeartbeat() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = HistoryStore(databaseURL: directory.appending(path: "history.sqlite"))
+        let start = Date.now.addingTimeInterval(-10 * 60)
+
+        // Codex republishes its quota report every few seconds with a fresh
+        // timestamp and an unchanged figure. Only the first, the heartbeat, and
+        // the genuine change may be stored.
+        for second in stride(from: 0.0, to: 45.0, by: 5.0) {
+            await store.ingest(
+                [usageSnapshot(fraction: 0.59, at: start.addingTimeInterval(second))],
+                retentionDays: 30
+            )
+        }
+        let afterPlateau = await store.consumption(startsAt: start.addingTimeInterval(-60), endsAt: .now)
+        XCTAssertEqual(try XCTUnwrap(afterPlateau.timelines.first).points.count, 1, "identical readings collapse")
+
+        // A minute of unchanged usage still earns one point, so a later rise is
+        // measured against a recent baseline rather than the whole plateau.
+        await store.ingest([usageSnapshot(fraction: 0.59, at: start.addingTimeInterval(70))], retentionDays: 30)
+        await store.ingest([usageSnapshot(fraction: 0.72, at: start.addingTimeInterval(80))], retentionDays: 30)
+
+        let afterRise = await store.consumption(startsAt: start.addingTimeInterval(-60), endsAt: .now)
+        let timeline = try XCTUnwrap(afterRise.timelines.first)
+        XCTAssertEqual(timeline.points.count, 3)
+        let surge = try XCTUnwrap(timeline.steepestSurge)
+        XCTAssertEqual(surge.elapsed, 10, accuracy: 0.5, "the rise, not the plateau before it")
+        XCTAssertEqual(surge.gainedPoints, 13, accuracy: 0.0001)
+    }
+
     private func usageSnapshot(fraction: Double, at measuredAt: Date) -> ProviderSnapshot {
         ProviderSnapshot(
             id: .claudeCode,
