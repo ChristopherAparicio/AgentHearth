@@ -9,6 +9,7 @@ final class CacheActivityAggregateTests: XCTestCase {
         let cachedInputTokens: Int
         let turnCount: Int
         let hitCount: Int
+        var outputTokens: Int = 0
     }
 
     func testDerivedRates() throws {
@@ -25,6 +26,20 @@ final class CacheActivityAggregateTests: XCTestCase {
         XCTAssertEqual(aggregate.uncachedInputTokens, 0)
         XCTAssertNil(aggregate.cacheReuseRate)
         XCTAssertNil(aggregate.hitRate)
+    }
+
+    func testBillableTokensExcludeCachedReads() {
+        // 8,200 uncached input + 1,500 output. The 1,800 cached reads are far
+        // cheaper than fresh input and must not inflate the ranking.
+        let aggregate = Aggregate(
+            inputTokens: 10_000,
+            cachedInputTokens: 1_800,
+            turnCount: 8,
+            hitCount: 4,
+            outputTokens: 1_500
+        )
+
+        XCTAssertEqual(aggregate.billableTokens, 9_700)
     }
 
     func testUncachedTokensNeverGoNegative() {

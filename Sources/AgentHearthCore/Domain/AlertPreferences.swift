@@ -18,6 +18,13 @@ public struct AlertPreferences: Codable, Equatable, Sendable {
     public var sessionCompletionEnabled: Bool
     public var cacheExpiryEnabled: Bool
     public var usageLimitEnabled: Bool
+    /// Whether a window consumed abnormally fast notifies. Separate from
+    /// `usageLimitEnabled`: the threshold alert says how full the window is,
+    /// this one says how fast it is emptying, and a user watching for runaway
+    /// agents wants the second without necessarily wanting the first.
+    public var usageBurnEnabled: Bool
+    public var usageBurnPoints: Int
+    public var usageBurnMinutes: Int
     public var cacheWarningSeconds: Int
     public var usageWarningFraction: Double
     public var usageAlertThresholds: [UsageAlertThreshold]
@@ -31,6 +38,9 @@ public struct AlertPreferences: Codable, Equatable, Sendable {
         sessionCompletionEnabled: Bool = true,
         cacheExpiryEnabled: Bool = true,
         usageLimitEnabled: Bool = true,
+        usageBurnEnabled: Bool = true,
+        usageBurnPoints: Int = UsageBurnPolicy.defaultPoints,
+        usageBurnMinutes: Int = UsageBurnPolicy.defaultMinutes,
         cacheWarningSeconds: Int = 60,
         usageWarningFraction: Double = 0.80,
         usageAlertThresholds: [UsageAlertThreshold]? = nil,
@@ -43,6 +53,9 @@ public struct AlertPreferences: Codable, Equatable, Sendable {
         self.sessionCompletionEnabled = sessionCompletionEnabled
         self.cacheExpiryEnabled = cacheExpiryEnabled
         self.usageLimitEnabled = usageLimitEnabled
+        self.usageBurnEnabled = usageBurnEnabled
+        self.usageBurnPoints = min(max(usageBurnPoints, 1), 100)
+        self.usageBurnMinutes = min(max(usageBurnMinutes, 1), 240)
         self.cacheWarningSeconds = max(0, cacheWarningSeconds)
         self.usageWarningFraction = min(max(usageWarningFraction, 0), 1)
         self.usageAlertThresholds = usageAlertThresholds ?? [
@@ -58,6 +71,7 @@ public struct AlertPreferences: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case notificationsEnabled, sessionAttentionEnabled, sessionCompletionEnabled
         case cacheExpiryEnabled, usageLimitEnabled, cacheWarningSeconds, usageWarningFraction
+        case usageBurnEnabled, usageBurnPoints, usageBurnMinutes
         case usageAlertThresholds, cacheNotificationProfiles
         case cacheNotificationRules, cacheAlertStates
     }
@@ -69,6 +83,9 @@ public struct AlertPreferences: Codable, Equatable, Sendable {
         self.sessionCompletionEnabled = try container.decodeIfPresent(Bool.self, forKey: .sessionCompletionEnabled) ?? true
         self.cacheExpiryEnabled = try container.decodeIfPresent(Bool.self, forKey: .cacheExpiryEnabled) ?? true
         self.usageLimitEnabled = try container.decodeIfPresent(Bool.self, forKey: .usageLimitEnabled) ?? true
+        self.usageBurnEnabled = try container.decodeIfPresent(Bool.self, forKey: .usageBurnEnabled) ?? true
+        self.usageBurnPoints = min(max(try container.decodeIfPresent(Int.self, forKey: .usageBurnPoints) ?? UsageBurnPolicy.defaultPoints, 1), 100)
+        self.usageBurnMinutes = min(max(try container.decodeIfPresent(Int.self, forKey: .usageBurnMinutes) ?? UsageBurnPolicy.defaultMinutes, 1), 240)
         self.cacheWarningSeconds = max(0, try container.decodeIfPresent(Int.self, forKey: .cacheWarningSeconds) ?? 60)
         self.usageWarningFraction = min(max(try container.decodeIfPresent(Double.self, forKey: .usageWarningFraction) ?? 0.80, 0), 1)
         self.usageAlertThresholds = try container.decodeIfPresent([UsageAlertThreshold].self, forKey: .usageAlertThresholds) ?? [

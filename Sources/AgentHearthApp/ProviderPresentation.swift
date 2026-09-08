@@ -160,6 +160,16 @@ enum CacheReusePresentation {
     }
 }
 
+/// Shared color scale for how full a usage window is, so the provider card
+/// and the consumption view grade the same figure the same way.
+enum UsagePresentation {
+    static func tint(for fraction: Double, base: Color) -> Color {
+        if fraction >= 0.90 { return .red }
+        if fraction >= 0.75 { return .orange }
+        return base
+    }
+}
+
 extension AgentSession {
     /// Session title without the provider name the surrounding UI already
     /// states — connector fallback titles are "<Provider> · <directory>", and

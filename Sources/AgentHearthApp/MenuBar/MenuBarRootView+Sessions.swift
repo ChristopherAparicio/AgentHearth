@@ -145,6 +145,7 @@ extension MenuBarRootView {
                 }
                 : nil,
             usageResetDisplay: model.usageResetDisplay,
+            onInspectUsage: { ConsumptionWindowPresenter.shared.show(model: model, providerID: $0) },
             showsCacheIcon: model.showsSessionCacheIcon,
             showsCacheCountdown: model.showsSessionCacheCountdown,
             showsCacheHits: model.showsSessionCacheHits,

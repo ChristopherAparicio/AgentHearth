@@ -19,7 +19,16 @@ public actor SnapshotAlertDetector {
     }
 
     private var previousSessions: [String: RememberedSession] = [:]
-    private var previousUsage: [String: Double] = [:]
+    /// Recent readings per usage window, newest last. A series rather than a
+    /// single previous value: the burn rule asks how much a window lost over
+    /// the last few minutes, which spans several polls.
+    private var usageSamples: [String: [UsageBurnSample]] = [:]
+    /// When each session was first *observed* working in its current spell.
+    /// Not when the turn began — polling only sees the session once a cycle —
+    /// so the figure is a floor. A burst attributed to a session that has been
+    /// working without pause is the signature of a runaway loop, which is
+    /// worth saying in the alert.
+    private var workingSince: [String: Date] = [:]
     private var hasBaseline = false
     private let now: @Sendable () -> Date
 
@@ -40,16 +49,11 @@ public actor SnapshotAlertDetector {
                 first.lastActivityAt >= second.lastActivityAt ? first : second
             }
         )
-        let currentUsage = Dictionary(
-            snapshots.flatMap { snapshot in
-                snapshot.usageWindows.map { (usageKey(providerID: snapshot.id, windowID: $0.id), $0.usedFraction) }
-            },
-            uniquingKeysWith: { _, second in second }
-        )
+        let burnLookback = TimeInterval(preferences.usageBurnMinutes * 60)
 
         guard hasBaseline else {
             remember(currentSessions)
-            previousUsage = currentUsage
+            recordUsage(in: snapshots, lookback: burnLookback)
             hasBaseline = true
             guard preferences.notificationsEnabled else { return [] }
             return currentSessions.values.compactMap { session in
@@ -60,7 +64,8 @@ public actor SnapshotAlertDetector {
 
         guard preferences.notificationsEnabled else {
             remember(currentSessions)
-            previousUsage = currentUsage
+            recordUsage(in: snapshots, lookback: burnLookback)
+            collapseUsageSeries()
             return []
         }
 
@@ -100,7 +105,7 @@ public actor SnapshotAlertDetector {
             for snapshot in snapshots {
                 for window in snapshot.usageWindows {
                     let key = usageKey(providerID: snapshot.id, windowID: window.id)
-                    guard let previous = previousUsage[key],
+                    guard let previous = usageSamples[key]?.last?.fraction,
                           let threshold = preferences.usageThresholdCrossed(
                             from: previous,
                             to: window.usedFraction
@@ -111,8 +116,17 @@ public actor SnapshotAlertDetector {
             }
         }
 
+        // The burn rule reads the series including this cycle's reading, so it
+        // runs after recording, unlike the threshold rule above which compares
+        // against the previous one.
+        recordUsage(in: snapshots, lookback: burnLookback)
+        if preferences.usageBurnEnabled {
+            alerts.append(contentsOf: burnAlerts(in: snapshots, preferences: preferences))
+        } else {
+            collapseUsageSeries()
+        }
+
         remember(currentSessions)
-        previousUsage = currentUsage
         return alerts
     }
 
@@ -127,6 +141,134 @@ public actor SnapshotAlertDetector {
             next[key] = remembered
         }
         previousSessions = next
+
+        // Only sessions still working carry a start forward; anything that
+        // stopped, finished, or vanished loses it, so the next spell of work
+        // is timed from its own beginning.
+        var stillWorking: [String: Date] = [:]
+        for (key, session) in current where session.status == .working {
+            stillWorking[key] = workingSince[key] ?? timestamp
+        }
+        workingSince = stillWorking
+    }
+
+    /// Adds this cycle's reading of every usage window to its series.
+    private func recordUsage(in snapshots: [ProviderSnapshot], lookback: TimeInterval) {
+        for snapshot in snapshots {
+            for window in snapshot.usageWindows {
+                let key = usageKey(providerID: snapshot.id, windowID: window.id)
+                let sample = UsageBurnSample(fraction: window.usedFraction, measuredAt: window.measuredAt)
+                usageSamples[key] = UsageBurnPolicy.appending(
+                    sample,
+                    to: usageSamples[key] ?? [],
+                    lookback: lookback
+                )
+            }
+        }
+    }
+
+    /// Drops every reading but the newest of each window.
+    ///
+    /// Used on the paths that record without evaluating — notifications off,
+    /// or the burn rule itself off. Those cycles must still advance the
+    /// baseline, but the rise they observed has gone unreported, and firing it
+    /// the moment the user switches alerts back on would deliver a burst that
+    /// is by then minutes or hours old.
+    private func collapseUsageSeries() {
+        usageSamples = usageSamples.compactMapValues { samples in
+            samples.isEmpty ? nil : Array(samples.suffix(1))
+        }
+    }
+
+    private func burnAlerts(in snapshots: [ProviderSnapshot], preferences: AlertPreferences) -> [AgentAlert] {
+        var alerts: [AgentAlert] = []
+        for snapshot in snapshots {
+            for window in snapshot.usageWindows {
+                let key = usageKey(providerID: snapshot.id, windowID: window.id)
+                guard let samples = usageSamples[key],
+                      let burn = UsageBurnPolicy.burn(in: samples, points: preferences.usageBurnPoints)
+                else { continue }
+                // Reported: restart the series from the newest reading. A
+                // cooldown would re-alert on the same burst once it lapsed;
+                // restarting means the next alert needs a genuinely new rise.
+                usageSamples[key] = Array(samples.suffix(1))
+                alerts.append(burnAlert(
+                    providerID: snapshot.id,
+                    window: window,
+                    burn: burn,
+                    sessions: snapshot.sessions
+                ))
+            }
+        }
+        return alerts
+    }
+
+    private func burnAlert(
+        providerID: AgentProviderID,
+        window: UsageWindow,
+        burn: UsageBurn,
+        sessions: [AgentSession]
+    ) -> AgentAlert {
+        let burstStart = window.measuredAt.addingTimeInterval(-burn.elapsed)
+        let suspect = topSuspect(among: sessions, providerID: providerID, since: burstStart)
+        var summary = "\(providerID.rawValue) · \(window.label) +\(burn.gainedPoints) pts in \(minutesText(burn.elapsed))"
+        if let suspect {
+            summary += " — \(suspectText(suspect))"
+        }
+        if let remaining = burn.minutesToExhaustion {
+            summary += " · empty in ~\(minutesText(remaining * 60)) at this rate"
+        }
+        return AgentAlert(
+            id: UUID().uuidString,
+            sourceID: .agentHearth,
+            type: "usage.burn",
+            severity: (burn.minutesToExhaustion ?? .greatestFiniteMagnitude) < 30 ? .error : .warning,
+            title: "Usage burning fast",
+            summary: summary,
+            sessionTarget: suspect?.target,
+            fingerprint: "\(providerID.rawValue):\(window.id):usage-burn:\(burn.gainedPoints)"
+        )
+    }
+
+    /// The session most likely behind a burst: the costliest last turn among
+    /// this provider's sessions that were active during it.
+    ///
+    /// This is a ranking, not a proof. With several agents running
+    /// concurrently nothing in the provider's counters says which one moved
+    /// the account-wide window, so the alert names a likely culprit and the
+    /// consumption view shows the full list.
+    private func topSuspect(
+        among sessions: [AgentSession],
+        providerID: AgentProviderID,
+        since burstStart: Date
+    ) -> AgentSession? {
+        sessions
+            .filter { $0.providerID == providerID }
+            .filter { $0.status == .working || $0.lastActivityAt >= burstStart }
+            .filter { turnCost($0) > 0 }
+            .max { turnCost($0) < turnCost($1) }
+    }
+
+    /// What a session's last measured turn plausibly cost the window. Cached
+    /// reads are excluded: they are far cheaper than fresh input, so counting
+    /// them would rank a large warm session above a smaller one that is
+    /// genuinely reprocessing its whole context every turn.
+    private func turnCost(_ session: AgentSession) -> Int {
+        (session.cache.uncachedInputTokens ?? 0) + max(0, session.cache.outputTokens ?? 0)
+    }
+
+    private func suspectText(_ session: AgentSession) -> String {
+        let name = session.projectName ?? session.title
+        guard let since = workingSince[sessionKey(session)] else { return name }
+        let elapsed = now().timeIntervalSince(since)
+        // Below a minute the duration says nothing a reader can act on.
+        guard elapsed >= 60 else { return name }
+        return "\(name), working \(minutesText(elapsed))"
+    }
+
+    private func minutesText(_ interval: TimeInterval) -> String {
+        let minutes = max(1, Int((interval / 60).rounded()))
+        return "\(minutes) min"
     }
 
     /// Session-scoped alerts (attention, completion, cache expiry) narrow to

@@ -28,6 +28,10 @@ struct ProviderCardView: View {
     /// Claude sign-in refresh that brings the reset times back.
     var usageHint: UsageHint?
     var usageResetDisplay: UsageResetDisplay = .countdown
+    /// Opens the consumption view for this provider. The question "why is this
+    /// bar so high?" is asked while looking at the bar, so that is where the
+    /// answer is reached from.
+    var onInspectUsage: ((AgentProviderID) -> Void)?
     let showsCacheIcon: Bool
     let showsCacheCountdown: Bool
     let showsCacheHits: Bool
@@ -65,7 +69,17 @@ struct ProviderCardView: View {
                 TimelineView(.periodic(from: .now, by: 60)) { context in
                     VStack(alignment: .leading, spacing: 9) {
                         ForEach(snapshot.usageWindows) { window in
-                            usageRow(window, now: context.date)
+                            if let onInspectUsage {
+                                Button {
+                                    onInspectUsage(snapshot.id)
+                                } label: {
+                                    usageRow(window, now: context.date)
+                                }
+                                .buttonStyle(.plain)
+                                .help("Show what consumed \(snapshot.id.displayName)'s \(window.label) window recently")
+                            } else {
+                                usageRow(window, now: context.date)
+                            }
                         }
                         if let usageHint {
                             HStack(spacing: 6) {
@@ -514,9 +528,7 @@ struct ProviderCardView: View {
     }
 
     private func usageColor(_ fraction: Double) -> Color {
-        if fraction >= 0.90 { return .red }
-        if fraction >= 0.75 { return .orange }
-        return snapshot.id.tint
+        UsagePresentation.tint(for: fraction, base: snapshot.id.tint)
     }
 
     private func reuseColor(_ fraction: Double) -> Color {

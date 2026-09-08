@@ -405,7 +405,7 @@ struct HistoryDashboardView: View {
     }
 }
 
-private struct HistoryMetricCard: View {
+struct HistoryMetricCard: View {
     let title: String
     let value: String
     let detail: String
@@ -449,7 +449,7 @@ private struct HistoryMetricCard: View {
     }
 }
 
-private struct HelpButton: View {
+struct HelpButton: View {
     let text: String
     @State private var isPresented = false
 

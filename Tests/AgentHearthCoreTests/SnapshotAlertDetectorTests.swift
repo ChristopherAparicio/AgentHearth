@@ -243,6 +243,138 @@ final class SnapshotAlertDetectorTests: XCTestCase {
         XCTAssertEqual(alerts.map(\.type), ["cache.expiring"])
     }
 
+    // MARK: - Usage burn
+
+    func testReportsABurstOnceRatherThanEveryPoll() async {
+        let detector = SnapshotAlertDetector()
+        _ = await detector.detect(in: [burnSnapshot(usage: 0.20, minutes: 0)], preferences: AlertPreferences())
+
+        let burst = await detector.detect(in: [burnSnapshot(usage: 0.42, minutes: 4)], preferences: AlertPreferences())
+        XCTAssertEqual(burst.filter { $0.type == "usage.burn" }.count, 1)
+
+        // Still climbing, but not by another full threshold: the same burst
+        // must not alert again.
+        let continued = await detector.detect(in: [burnSnapshot(usage: 0.47, minutes: 7)], preferences: AlertPreferences())
+        XCTAssertTrue(continued.allSatisfy { $0.type != "usage.burn" })
+
+        // A fresh rise of the configured size alerts again.
+        let second = await detector.detect(in: [burnSnapshot(usage: 0.65, minutes: 10)], preferences: AlertPreferences())
+        XCTAssertEqual(second.filter { $0.type == "usage.burn" }.count, 1)
+    }
+
+    func testDoesNotReportASteadyClimb() async {
+        let detector = SnapshotAlertDetector()
+        _ = await detector.detect(in: [burnSnapshot(usage: 0.20, minutes: 0)], preferences: AlertPreferences())
+        let alerts = await detector.detect(in: [burnSnapshot(usage: 0.28, minutes: 6)], preferences: AlertPreferences())
+
+        XCTAssertTrue(alerts.allSatisfy { $0.type != "usage.burn" })
+    }
+
+    func testBurstNamesTheCostliestActiveSessionAndTargetsIt() async throws {
+        let detector = SnapshotAlertDetector()
+        _ = await detector.detect(in: [burnSnapshot(usage: 0.20, minutes: 0)], preferences: AlertPreferences())
+
+        let alerts = await detector.detect(
+            in: [burnSnapshot(
+                usage: 0.45,
+                minutes: 5,
+                sessions: [
+                    burnSession(id: "quiet", project: "docs", uncachedInput: 800, output: 200),
+                    burnSession(id: "runaway", project: "api-rewrite", uncachedInput: 90_000, output: 6_000)
+                ]
+            )],
+            preferences: AlertPreferences()
+        )
+
+        let burn = try XCTUnwrap(alerts.first { $0.type == "usage.burn" })
+        XCTAssertEqual(burn.sessionTarget?.sessionID, "runaway")
+        XCTAssertTrue(burn.summary.contains("api-rewrite"), burn.summary)
+        XCTAssertTrue(burn.summary.contains("+25 pts"), burn.summary)
+    }
+
+    func testBurstReportsHowLongTheSuspectHasBeenWorking() async {
+        let clock = MutableClock(burnEpoch)
+        let detector = SnapshotAlertDetector(now: { clock.value })
+        let session = burnSession(id: "runaway", project: "api-rewrite", uncachedInput: 90_000, output: 6_000)
+        _ = await detector.detect(in: [burnSnapshot(usage: 0.20, minutes: 0, sessions: [session])], preferences: AlertPreferences())
+
+        clock.value = burnEpoch.addingTimeInterval(8 * 60)
+        let alerts = await detector.detect(
+            in: [burnSnapshot(usage: 0.45, minutes: 8, sessions: [session])],
+            preferences: AlertPreferences()
+        )
+
+        let burn = alerts.first { $0.type == "usage.burn" }
+        XCTAssertEqual(burn?.summary.contains("working 8 min"), true)
+    }
+
+    func testDisabledBurnRuleDoesNotReplayOnceReenabled() async {
+        var disabled = AlertPreferences()
+        disabled.usageBurnEnabled = false
+        let detector = SnapshotAlertDetector()
+        _ = await detector.detect(in: [burnSnapshot(usage: 0.20, minutes: 0)], preferences: disabled)
+        _ = await detector.detect(in: [burnSnapshot(usage: 0.50, minutes: 4)], preferences: disabled)
+
+        let alerts = await detector.detect(in: [burnSnapshot(usage: 0.52, minutes: 8)], preferences: AlertPreferences())
+        XCTAssertTrue(alerts.allSatisfy { $0.type != "usage.burn" }, "the burst happened while the rule was off")
+    }
+
+    func testWindowRolloverIsNotABurst() async {
+        let detector = SnapshotAlertDetector()
+        _ = await detector.detect(in: [burnSnapshot(usage: 0.95, minutes: 0)], preferences: AlertPreferences())
+        let alerts = await detector.detect(in: [burnSnapshot(usage: 0.02, minutes: 4)], preferences: AlertPreferences())
+
+        XCTAssertTrue(alerts.allSatisfy { $0.type != "usage.burn" })
+    }
+
+    private var burnEpoch: Date { Date(timeIntervalSince1970: 2_000_000) }
+
+    private func burnSession(
+        id: String,
+        project: String,
+        uncachedInput: Int,
+        output: Int
+    ) -> AgentSession {
+        AgentSession(
+            id: id,
+            providerID: .claudeCode,
+            title: "Session \(id)",
+            projectName: project,
+            status: .working,
+            lastActivityAt: burnEpoch,
+            cache: CacheSnapshot(
+                temperature: .warm,
+                remainingSeconds: 240,
+                ttlSeconds: 300,
+                inputTokens: uncachedInput,
+                outputTokens: output,
+                cachedReadTokens: 500_000
+            ),
+            target: SessionTarget(providerID: .claudeCode, sessionID: id)
+        )
+    }
+
+    /// A Claude 5h window read `minutes` after the epoch. Usage windows carry
+    /// the provider's own measurement instant, which is what the burn rule
+    /// measures elapsed time against.
+    private func burnSnapshot(
+        usage: Double,
+        minutes: Double,
+        sessions: [AgentSession] = []
+    ) -> ProviderSnapshot {
+        ProviderSnapshot(
+            id: .claudeCode,
+            connectionState: .connected,
+            sessions: sessions,
+            usageWindows: [UsageWindow(
+                id: "claude-5h",
+                label: "5 hours",
+                usedFraction: usage,
+                measuredAt: burnEpoch.addingTimeInterval(minutes * 60)
+            )]
+        )
+    }
+
     private var sessionRef: PrioritySessionRef {
         PrioritySessionRef(providerID: .codex, hostID: AgentHost.local.id, sessionID: "session-1")
     }

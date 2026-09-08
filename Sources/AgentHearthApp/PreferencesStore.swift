@@ -207,6 +207,17 @@ final class PreferencesStore {
         set { defaults.set(newValue, forKey: PreferenceKey.historyRangeDays) }
     }
 
+    /// Range of the consumption view, in minutes. Minutes rather than days
+    /// because this view exists for the short horizons the cache dashboard
+    /// cannot express — a burst lasts five minutes, not a day.
+    var consumptionRangeMinutes: Int {
+        get {
+            let stored = defaults.integer(forKey: PreferenceKey.consumptionRangeMinutes)
+            return [15, 60, 240, 1_440].contains(stored) ? stored : 60
+        }
+        set { defaults.set(newValue, forKey: PreferenceKey.consumptionRangeMinutes) }
+    }
+
     var cacheHitThreshold: Int {
         get {
             let stored = defaults.integer(forKey: PreferenceKey.cacheHitThreshold)
@@ -337,6 +348,7 @@ private enum PreferenceKey {
     static let historyEnabled = "historyEnabled"
     static let historyRetentionDays = "historyRetentionDays"
     static let historyRangeDays = "historyRangeDays"
+    static let consumptionRangeMinutes = "consumptionRangeMinutes"
     static let cacheHitThreshold = "cacheHitThreshold"
     static let morningRecapEnabled = "morningRecapEnabled"
     static let morningRecapStartHour = "morningRecapStartHour"

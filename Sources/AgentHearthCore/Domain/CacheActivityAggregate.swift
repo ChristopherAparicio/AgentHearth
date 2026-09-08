@@ -13,6 +13,8 @@ public protocol CacheActivityAggregate {
     var turnCount: Int { get }
     /// Turns that hit the provider cache.
     var hitCount: Int { get }
+    /// Total output tokens produced.
+    var outputTokens: Int { get }
 }
 
 extension CacheActivityAggregate {
@@ -27,4 +29,11 @@ extension CacheActivityAggregate {
     public var hitRate: Double? {
         turnCount > 0 ? Double(hitCount) / Double(turnCount) : nil
     }
+
+    /// Tokens that plausibly counted against a usage window: everything the
+    /// provider processed or generated at full price. Cached reads are
+    /// excluded because they are far cheaper, and including them would rank a
+    /// large warm session above a smaller one reprocessing its whole context
+    /// on every turn — the opposite of what a consumption ranking is for.
+    public var billableTokens: Int { uncachedInputTokens + max(0, outputTokens) }
 }

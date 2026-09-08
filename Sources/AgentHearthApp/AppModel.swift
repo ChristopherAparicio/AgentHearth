@@ -86,6 +86,9 @@ final class AppModel {
     /// Number of views currently displaying `historyDashboard`; the refresh
     /// loop skips the aggregation query while it is zero.
     var historyDashboardObservers = 0
+    /// Number of views currently displaying `consumption`; like the dashboard,
+    /// the refresh loop skips its queries while it is zero.
+    var consumptionObservers = 0
     var notificationPolicy: NotificationPolicy {
         didSet {
             guard notificationPolicy != oldValue else { return }
@@ -220,6 +223,15 @@ final class AppModel {
         }
     }
     var historyDashboard = HistoryDashboardSnapshot.empty
+    var consumption = ConsumptionSnapshot.empty
+    var consumptionRangeMinutes: Int {
+        didSet {
+            guard consumptionRangeMinutes != oldValue else { return }
+            preferences.consumptionRangeMinutes = consumptionRangeMinutes
+            Task { await refreshConsumption() }
+        }
+    }
+    var consumptionProviderFilter: AgentProviderID?
     /// On-disk size of the history database, refreshed on every poll. Cheap
     /// (three `stat` calls), unlike the dashboard aggregation.
     var historyStorageBytes: Int64 = 0
@@ -312,6 +324,8 @@ final class AppModel {
         self.historyRetention = preferences.historyRetention
         self.historyRangeDays = preferences.historyRangeDays
         self.historyProviderFilter = nil
+        self.consumptionRangeMinutes = preferences.consumptionRangeMinutes
+        self.consumptionProviderFilter = nil
         self.cacheHitThreshold = preferences.cacheHitThreshold
         self.morningRecapEnabled = preferences.morningRecapEnabled
         self.morningRecapStartHour = preferences.morningRecapStartHour
@@ -540,6 +554,14 @@ final class AppModel {
                 historyDashboard = await historyStore.dashboard(
                     days: historyRangeDays,
                     providerID: historyProviderFilter,
+                    cacheHitThreshold: Double(cacheHitThreshold) / 100
+                )
+            }
+            if consumptionObservers > 0 {
+                consumption = await historyStore.consumption(
+                    startsAt: consumptionStart(),
+                    endsAt: .now,
+                    providerID: consumptionProviderFilter,
                     cacheHitThreshold: Double(cacheHitThreshold) / 100
                 )
             }

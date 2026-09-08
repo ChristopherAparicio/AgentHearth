@@ -175,6 +175,14 @@ struct MenuBarRootView: View {
             Spacer()
 
             Button {
+                ConsumptionWindowPresenter.shared.show(model: model)
+            } label: {
+                Label("Consumption", systemImage: "flame")
+            }
+            .buttonStyle(.plain)
+            .font(.caption)
+
+            Button {
                 HistoryWindowPresenter.shared.show(model: model)
             } label: {
                 Label("Cache Insights", systemImage: "chart.xyaxis.line")

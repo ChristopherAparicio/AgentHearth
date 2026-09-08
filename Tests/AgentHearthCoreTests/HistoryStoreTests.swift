@@ -191,6 +191,82 @@ final class HistoryStoreTests: XCTestCase {
         XCTAssertEqual(afterRepeat.turnCount, 3)
     }
 
+    func testRecordsUsageReadingsAndBuildsATimeline() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = HistoryStore(databaseURL: directory.appending(path: "history.sqlite"))
+        let start = Date.now.addingTimeInterval(-20 * 60)
+
+        // The middle two readings are the burst: 20 points in two minutes.
+        for (fraction, minute) in [(0.20, 0.0), (0.22, 4.0), (0.42, 6.0), (0.44, 10.0)] {
+            await store.ingest(
+                [usageSnapshot(fraction: fraction, at: start.addingTimeInterval(minute * 60))],
+                retentionDays: 30
+            )
+        }
+        // A re-reported reading must not become a second point.
+        await store.ingest([usageSnapshot(fraction: 0.44, at: start.addingTimeInterval(10 * 60))], retentionDays: 30)
+
+        let consumption = await store.consumption(startsAt: start.addingTimeInterval(-60), endsAt: .now)
+        let timeline = try XCTUnwrap(consumption.timelines.first)
+        XCTAssertEqual(timeline.points.count, 4)
+        XCTAssertEqual(timeline.label, "5 hours")
+        XCTAssertEqual(timeline.consumedPoints, 24, accuracy: 0.0001)
+        XCTAssertEqual(try XCTUnwrap(timeline.latestFraction), 0.44, accuracy: 0.0001)
+
+        let surge = try XCTUnwrap(timeline.steepestSurge)
+        XCTAssertEqual(surge.gainedPoints, 20, accuracy: 0.0001)
+        XCTAssertEqual(surge.elapsed, 120, accuracy: 0.5)
+    }
+
+    func testConsumptionRanksSessionsByBillableTokensNotRecency() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = HistoryStore(databaseURL: directory.appending(path: "history.sqlite"))
+        let time = Date.now.addingTimeInterval(-10 * 60)
+
+        // The expensive session ran first, so recency ordering would bury it.
+        // Its input is mostly fresh; the recent one is almost entirely cached.
+        let expensive = snapshot(id: "runaway", status: .completed, input: 90_000, cached: 1_000, output: 8_000, at: time)
+        let cheapButRecent = snapshot(id: "browsing", status: .idle, input: 500, cached: 400_000, output: 100, at: time.addingTimeInterval(5 * 60))
+        await store.ingest([expensive, cheapButRecent], retentionDays: 30)
+
+        let consumption = await store.consumption(startsAt: time.addingTimeInterval(-60), endsAt: .now)
+        XCTAssertEqual(consumption.sessions.first?.id.hasSuffix("runaway"), true)
+        XCTAssertEqual(consumption.sessions.first?.billableTokens, 98_000)
+
+        // The dashboard keeps ordering by recency, so the two views disagree
+        // on order by design rather than by accident.
+        let dashboard = await store.dashboard(days: 7)
+        XCTAssertEqual(dashboard.sessions.first?.id.hasSuffix("browsing"), true)
+    }
+
+    func testClearAlsoDropsUsageReadings() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = HistoryStore(databaseURL: directory.appending(path: "history.sqlite"))
+        await store.ingest([usageSnapshot(fraction: 0.5, at: .now)], retentionDays: 30)
+        await store.clear()
+
+        let consumption = await store.consumption(startsAt: .now.addingTimeInterval(-3_600), endsAt: .now)
+        XCTAssertTrue(consumption.timelines.isEmpty)
+    }
+
+    private func usageSnapshot(fraction: Double, at measuredAt: Date) -> ProviderSnapshot {
+        ProviderSnapshot(
+            id: .claudeCode,
+            connectionState: .connected,
+            sessions: [],
+            usageWindows: [UsageWindow(
+                id: "claude-5h",
+                label: "5 hours",
+                usedFraction: fraction,
+                measuredAt: measuredAt
+            )],
+            updatedAt: measuredAt
+        )
+    }
+
     private func temporaryDirectory() throws -> URL {
         let directory = FileManager.default.temporaryDirectory.appending(path: "AgentHearth-HistoryStoreTests-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

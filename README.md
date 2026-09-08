@@ -28,6 +28,13 @@ what it shows you, in plain language.
 - Prompt-cache temperature and cache-hit health per session.
 - Cache Insights dashboard with request-level hits, misses, cold starts, daily
   charts, and per-session/provider/machine breakdowns.
+- Recent Consumption view answering "what just emptied my 5h window": each
+  usage window's trace over the last 15 minutes to 24 hours, the steepest
+  stretch within it, and the sessions that were spending — ranked by billable
+  tokens, with sessions still working listed separately.
+- A burn-rate alert that fires when a usage window empties abnormally fast and
+  names the costliest session running at the time, so a runaway agent
+  interrupts you instead of being reconstructed afterwards.
 - Mid-session model changes, which invalidate the prompt cache, listed with the
   input tokens the next turn had to reprocess.
 - Bounded local history with 7/30/90/365-day retention and optional daily or

@@ -71,6 +71,9 @@ struct NotificationsSettingsSection: View {
                 Toggle("Usage limit alerts", isOn: $alertRules.preferences.usageLimitEnabled)
                 UsageAlertThresholdSettings(model: model)
                     .disabled(!model.alertRules.preferences.usageLimitEnabled)
+                Toggle("Usage burning fast", isOn: $alertRules.preferences.usageBurnEnabled)
+                UsageBurnSettings(model: model)
+                    .disabled(!model.alertRules.preferences.usageBurnEnabled)
                 Toggle("Sounds", isOn: $model.notificationPolicy.soundsEnabled)
                 Toggle("Silence ordinary sounds in Night mode", isOn: $model.notificationPolicy.silenceSoundsInNightMode)
                 Toggle("Allow critical sounds in Night mode", isOn: $model.notificationPolicy.allowCriticalSoundsInNightMode)
@@ -423,6 +426,55 @@ private struct ProjectNotificationScopeView: View {
         Binding(
             get: { model.alertRules.cacheNotificationsEnabled(for: project) },
             set: { model.alertRules.setCacheNotificationsEnabled($0, for: project) }
+        )
+    }
+}
+
+/// How fast a usage window has to empty before it notifies. Separate from the
+/// threshold alerts above: those say how full the window is, this says how fast
+/// it is emptying — the difference between "you are at 80%" and "you just lost
+/// 20 points in six minutes, and something is still running".
+private struct UsageBurnSettings: View {
+    @Bindable var model: AppModel
+
+    private var preferences: AlertPreferences { model.alertRules.preferences }
+
+    var body: some View {
+        @Bindable var alertRules = model.alertRules
+        return VStack(alignment: .leading, spacing: 6) {
+            settingsControlRow("Alert after consuming") {
+                Picker("", selection: $alertRules.preferences.usageBurnPoints) {
+                    ForEach([5, 10, 15, 20, 30, 50], id: \.self) { points in
+                        Text("\(points) points").tag(points)
+                    }
+                }
+                .labelsHidden()
+            }
+            settingsControlRow("Within") {
+                Picker("", selection: $alertRules.preferences.usageBurnMinutes) {
+                    ForEach([5, 10, 15, 30, 60], id: \.self) { minutes in
+                        Text("\(minutes) minutes").tag(minutes)
+                    }
+                }
+                .labelsHidden()
+            }
+            Text(explanation)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// States the rule against the even-spend rate so the chosen numbers mean
+    /// something: "15 points in 10 minutes" is abstract until you know a 5h
+    /// window spent evenly moves 0.33 points a minute.
+    private var explanation: String {
+        let rate = Double(preferences.usageBurnPoints) / Double(max(1, preferences.usageBurnMinutes))
+        let multiple = rate / (100.0 / 300.0)
+        return String(
+            format: "%.1f points a minute — about %.0f× the rate that would spend a 5h window evenly. The alert names the costliest session running at the time.",
+            rate,
+            multiple
         )
     }
 }

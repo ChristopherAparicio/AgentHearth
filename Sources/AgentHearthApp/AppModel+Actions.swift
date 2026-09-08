@@ -164,6 +164,48 @@ extension AppModel {
         historyDashboardObservers = max(0, historyDashboardObservers - 1)
     }
 
+    func beginObservingConsumption() {
+        consumptionObservers += 1
+        Task { await refreshConsumption() }
+    }
+
+    func endObservingConsumption() {
+        consumptionObservers = max(0, consumptionObservers - 1)
+    }
+
+    func consumptionStart(now: Date = .now) -> Date {
+        now.addingTimeInterval(-TimeInterval(max(1, consumptionRangeMinutes) * 60))
+    }
+
+    func refreshConsumption() async {
+        consumption = await historyStore.consumption(
+            startsAt: consumptionStart(),
+            endsAt: .now,
+            providerID: consumptionProviderFilter,
+            cacheHitThreshold: Double(cacheHitThreshold) / 100
+        )
+    }
+
+    /// Sessions working right now, costliest last turn first.
+    ///
+    /// History only records a turn once it has finished, so a session still
+    /// working — the shape a runaway loop takes — contributes nothing to the
+    /// ranking above no matter how much it is spending. These are shown
+    /// separately rather than merged into it: the figure is one turn in
+    /// progress, not a total for the range.
+    var inFlightSessions: [AgentSession] {
+        snapshots
+            .flatMap(\.sessions)
+            .filter { $0.status == .working }
+            .filter { consumptionProviderFilter == nil || $0.providerID == consumptionProviderFilter }
+            .filter { inFlightCost($0) > 0 }
+            .sorted { inFlightCost($0) > inFlightCost($1) }
+    }
+
+    func inFlightCost(_ session: AgentSession) -> Int {
+        (session.cache.uncachedInputTokens ?? 0) + max(0, session.cache.outputTokens ?? 0)
+    }
+
     func setOpenCodeServerSelection(_ selection: OpenCodeServerSelection) {
         openCodeServerSelection = selection
         normalizeSelection()

@@ -31,6 +31,10 @@ public actor HistoryStore {
     /// not a change.
     private static let modelSwitchPredicate = "WHERE previous_model IS NOT NULL AND previous_model<>model"
 
+    /// Ceiling on how long account usage readings are kept, regardless of the
+    /// configured history retention.
+    static let usageSampleRetentionDays = 7
+
     private let databaseURL: URL
     nonisolated(unsafe) private var database: OpaquePointer?
     private var lastPrunedAt: Date?
@@ -55,6 +59,11 @@ public actor HistoryStore {
             let written = max(0, session.cache.cacheWriteTokens ?? 0)
             guard fresh + cached + written > 0 else { continue }
             insertMeasurement(database: database, session: session, inputTokens: fresh)
+        }
+        for snapshot in snapshots {
+            for window in snapshot.usageWindows {
+                insertUsageSample(database: database, providerID: snapshot.id, window: window)
+            }
         }
         let pruned = prune(database: database, retentionDays: retentionDays)
         sqlite3_exec(database, "COMMIT", nil, nil, nil)
@@ -128,9 +137,47 @@ public actor HistoryStore {
         )
     }
 
+    /// What moved the usage windows over a short, recent range, and which
+    /// sessions were measured spending tokens while they moved.
+    ///
+    /// The two halves answer different questions and come from different
+    /// sources: the timelines are the provider's own account-level readings,
+    /// while the ranking is AgentHearth's per-turn sampling. A session's share
+    /// of a window is therefore a ranking, not an audit — several agents run
+    /// concurrently and nothing in the counters says which one moved the
+    /// account-wide figure.
+    public func consumption(
+        startsAt: Date,
+        endsAt: Date,
+        providerID: AgentProviderID? = nil,
+        cacheHitThreshold: Double = 0.80,
+        limit: Int = 25
+    ) -> ConsumptionSnapshot {
+        guard let database = openDatabase() else { return .empty }
+        return ConsumptionSnapshot(
+            startsAt: startsAt,
+            endsAt: endsAt,
+            timelines: loadTimelines(
+                database: database,
+                start: startsAt,
+                end: endsAt,
+                providerID: providerID
+            ),
+            sessions: loadSessions(
+                database: database,
+                start: startsAt,
+                end: endsAt,
+                providerID: providerID,
+                threshold: min(1, max(0, cacheHitThreshold)),
+                ranking: .costliest,
+                limit: limit
+            )
+        )
+    }
+
     public func clear() {
         guard let database = openDatabase() else { return }
-        sqlite3_exec(database, "DELETE FROM cache_events; VACUUM;", nil, nil, nil)
+        sqlite3_exec(database, "DELETE FROM cache_events; DELETE FROM usage_samples; VACUUM;", nil, nil, nil)
     }
 
     public func applyRetention(days: Int) {
@@ -162,6 +209,19 @@ public actor HistoryStore {
         CREATE INDEX IF NOT EXISTS cache_events_time ON cache_events(occurred_at_ms);
         CREATE INDEX IF NOT EXISTS cache_events_session ON cache_events(session_key, occurred_at_ms);
         """, nil, nil, nil)
+        // Usage readings are account-level, not per session: one row per
+        // provider window per measurement. The primary key makes a reading
+        // re-reported across polls — the common case, since an idle provider
+        // republishes its last figure — a no-op rather than a duplicate.
+        sqlite3_exec(handle, """
+        CREATE TABLE IF NOT EXISTS usage_samples (
+          provider TEXT NOT NULL, window_id TEXT NOT NULL, host_id TEXT NOT NULL,
+          host_name TEXT NOT NULL, label TEXT NOT NULL,
+          measured_at_ms INTEGER NOT NULL, used_fraction REAL NOT NULL,
+          PRIMARY KEY(provider, window_id, host_id, measured_at_ms)
+        );
+        CREATE INDEX IF NOT EXISTS usage_samples_time ON usage_samples(measured_at_ms);
+        """, nil, nil, nil)
         if version >= 2, version < 3 {
             sqlite3_exec(
                 handle,
@@ -171,7 +231,7 @@ public actor HistoryStore {
                 nil
             )
         }
-        sqlite3_exec(handle, "PRAGMA user_version=3", nil, nil, nil)
+        sqlite3_exec(handle, "PRAGMA user_version=4", nil, nil, nil)
         database = handle
         return handle
     }
@@ -233,6 +293,29 @@ public actor HistoryStore {
         sqlite3_bind_int64(statement, 10, Int64(totalInput))
         sqlite3_bind_int64(statement, 11, Int64(cached))
         sqlite3_bind_int64(statement, 12, Int64(output))
+        sqlite3_step(statement)
+    }
+
+    private func insertUsageSample(
+        database: OpaquePointer,
+        providerID: AgentProviderID,
+        window: UsageWindow
+    ) {
+        let sql = """
+        INSERT OR IGNORE INTO usage_samples(
+          provider,window_id,host_id,host_name,label,measured_at_ms,used_fraction
+        ) VALUES(?,?,?,?,?,?,?)
+        """
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK, let statement else { return }
+        defer { sqlite3_finalize(statement) }
+        bind(providerID.rawValue, to: statement, at: 1)
+        bind(window.id, to: statement, at: 2)
+        bind(window.host.id, to: statement, at: 3)
+        bind(window.host.displayName, to: statement, at: 4)
+        bind(window.label, to: statement, at: 5)
+        sqlite3_bind_int64(statement, 6, milliseconds(window.measuredAt))
+        sqlite3_bind_double(statement, 7, window.usedFraction)
         sqlite3_step(statement)
     }
 
@@ -302,12 +385,91 @@ public actor HistoryStore {
         return values
     }
 
+    /// How a session list is ordered. The dashboard asks "what ran lately";
+    /// the consumption view asks "what cost the most".
+    private enum SessionRanking {
+        case mostRecent
+        case costliest
+
+        var orderBySQL: String {
+            switch self {
+            case .mostRecent:
+                "MAX(occurred_at_ms) DESC"
+            case .costliest:
+                "SUM(input_tokens)-SUM(cached_input_tokens)+SUM(output_tokens) DESC, MAX(occurred_at_ms) DESC"
+            }
+        }
+    }
+
+    private func loadTimelines(
+        database: OpaquePointer,
+        start: Date,
+        end: Date,
+        providerID: AgentProviderID?
+    ) -> [UsageTimeline] {
+        let sql = """
+        SELECT provider,window_id,host_name,label,measured_at_ms,used_fraction
+        FROM usage_samples
+        WHERE measured_at_ms>=? AND measured_at_ms<? AND (? IS NULL OR provider=?)
+        ORDER BY provider,window_id,host_name,measured_at_ms
+        """
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK, let statement else { return [] }
+        defer { sqlite3_finalize(statement) }
+        sqlite3_bind_int64(statement, 1, milliseconds(start))
+        sqlite3_bind_int64(statement, 2, milliseconds(end))
+        bindOptional(providerID?.rawValue, to: statement, at: 3)
+        bindOptional(providerID?.rawValue, to: statement, at: 4)
+
+        // Rows arrive grouped and time-ordered by the ORDER BY, so one pass
+        // builds every trace without sorting again.
+        var timelines: [UsageTimeline] = []
+        var currentKey: String?
+        var currentPoints: [UsageTimelinePoint] = []
+        var currentMeta: (provider: AgentProviderID, windowID: String, hostName: String, label: String)?
+
+        func flush() {
+            guard let meta = currentMeta, !currentPoints.isEmpty else { return }
+            timelines.append(UsageTimeline(
+                providerID: meta.provider,
+                windowID: meta.windowID,
+                label: meta.label,
+                hostName: meta.hostName,
+                points: currentPoints
+            ))
+            currentPoints = []
+        }
+
+        while sqlite3_step(statement) == SQLITE_ROW {
+            guard let rawProvider = text(statement, 0),
+                  let provider = AgentProviderID(rawValue: rawProvider),
+                  let windowID = text(statement, 1),
+                  let hostName = text(statement, 2),
+                  let label = text(statement, 3)
+            else { continue }
+            let key = "\(rawProvider):\(windowID):\(hostName)"
+            if key != currentKey {
+                flush()
+                currentKey = key
+                currentMeta = (provider, windowID, hostName, label)
+            }
+            currentPoints.append(UsageTimelinePoint(
+                measuredAt: Date(millisecondsSince1970: sqlite3_column_int64(statement, 4)),
+                usedFraction: sqlite3_column_double(statement, 5)
+            ))
+        }
+        flush()
+        return timelines
+    }
+
     private func loadSessions(
         database: OpaquePointer,
         start: Date,
         end: Date,
         providerID: AgentProviderID?,
-        threshold: Double
+        threshold: Double,
+        ranking: SessionRanking = .mostRecent,
+        limit: Int = 100
     ) -> [SessionHistorySummary] {
         let sql = """
         SELECT session_key,MAX(title),provider,MAX(host_name),MAX(source_name),COUNT(*),
@@ -315,7 +477,7 @@ public actor HistoryStore {
                SUM(input_tokens),SUM(cached_input_tokens),SUM(output_tokens),MAX(occurred_at_ms)
         FROM cache_events
         WHERE occurred_at_ms>=? AND occurred_at_ms<? AND (? IS NULL OR provider=?)
-        GROUP BY session_key,provider ORDER BY MAX(occurred_at_ms) DESC LIMIT 100
+        GROUP BY session_key,provider ORDER BY \(ranking.orderBySQL) LIMIT \(max(1, limit))
         """
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK, let statement else { return [] }
@@ -494,11 +656,23 @@ public actor HistoryStore {
     private func prune(database: OpaquePointer, retentionDays: Int, force: Bool = false) -> Bool {
         let now = Date.now
         if !force, let lastPrunedAt, now.timeIntervalSince(lastPrunedAt) < 6 * 60 * 60 { return false }
-        var statement: OpaquePointer?
-        guard sqlite3_prepare_v2(database, "DELETE FROM cache_events WHERE occurred_at_ms < ?", -1, &statement, nil) == SQLITE_OK, let statement else { return false }
-        defer { sqlite3_finalize(statement) }
-        sqlite3_bind_int64(statement, 1, milliseconds(now.addingTimeInterval(-TimeInterval(max(1, retentionDays) * 86_400))))
-        sqlite3_step(statement)
+        let days = max(1, retentionDays)
+        // Usage readings are kept far more briefly than turn measurements, and
+        // deliberately not for the user's chosen retention: one row per poll
+        // per window accumulates quickly, and the only view that reads them
+        // looks back at most a day. Keeping a year of them would cost storage
+        // nothing can ever display.
+        let cutoffs = [
+            ("DELETE FROM cache_events WHERE occurred_at_ms < ?", days),
+            ("DELETE FROM usage_samples WHERE measured_at_ms < ?", min(days, Self.usageSampleRetentionDays))
+        ]
+        for (sql, retention) in cutoffs {
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK, let statement else { continue }
+            sqlite3_bind_int64(statement, 1, milliseconds(now.addingTimeInterval(-TimeInterval(retention * 86_400))))
+            sqlite3_step(statement)
+            sqlite3_finalize(statement)
+        }
         lastPrunedAt = now
         return true
     }
