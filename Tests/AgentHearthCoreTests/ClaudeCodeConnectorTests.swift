@@ -276,6 +276,46 @@ final class ClaudeCodeConnectorTests: XCTestCase {
         XCTAssertTrue(snapshot.usageWindows.isEmpty)
     }
 
+    /// Claude Code carries `rate_limits` on only some status-line payloads, and
+    /// the plain ones arrive with both windows nil. Letting those replace the
+    /// stored event wholesale discarded the usage seconds after it arrived, and
+    /// the card fell back to the desktop journal — up to fifteen minutes old —
+    /// while a better reading had been received and thrown away.
+    func testStatusWithoutRateLimitsDoesNotErasePreviouslyReportedUsage() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let connector = ClaudeCodeConnector(
+            projectsURL: root,
+            planUsageHistoryURL: root.appending(path: "missing.json"),
+            now: { Date(timeIntervalSince1970: 2_000) }
+        )
+
+        try await connector.ingest(ClaudeCodeStatusEvent(
+            sessionID: "s-1",
+            fiveHour: .init(usedPercentage: 42, resetsAt: 5_000),
+            sevenDay: .init(usedPercentage: 18, resetsAt: 9_000),
+            sentAt: 1_000_000
+        ))
+        // A later payload with no rate limits at all: it must not take the
+        // windows down with it.
+        try await connector.ingest(ClaudeCodeStatusEvent(
+            sessionID: "s-1",
+            fiveHour: nil,
+            sevenDay: nil,
+            sentAt: 1_500_000
+        ))
+        let snapshot = try await connector.snapshot()
+
+        let fiveHour = try XCTUnwrap(snapshot.usageWindows.first { $0.id == "claude-5h" })
+        XCTAssertEqual(fiveHour.usedFraction, 0.42, accuracy: 0.0001)
+        XCTAssertEqual(
+            fiveHour.measuredAt,
+            Date(timeIntervalSince1970: 1_000),
+            "the retained reading keeps the timestamp of the payload that carried it, so it still ages honestly"
+        )
+        XCTAssertEqual(snapshot.usageWindows.first { $0.id == "claude-7d" }?.usedFraction ?? 0, 0.18, accuracy: 0.0001)
+    }
+
     func testAccountUsageSuppliesResetWhileJournalKeepsTheFresherPercent() async throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }

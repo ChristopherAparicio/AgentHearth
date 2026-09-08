@@ -16,6 +16,15 @@ public actor ClaudeCodeConnector: ProviderConnector, AccountUsageIngesting {
     private var sourceMode = ProviderDataSourceMode.automatic
     private var hookEventsBySession: [String: ClaudeCodeHookEvent] = [:]
     private var statusEventsBySession: [String: ClaudeCodeStatusEvent] = [:]
+    // The last status event per session that actually carried usage windows.
+    // Claude Code only reports `rate_limits` on some status-line payloads, and
+    // the plain ones arrive with both windows nil. Keeping only the newest
+    // event per session therefore threw the usage away seconds after it
+    // arrived, and the card fell back to the desktop journal — a reading up to
+    // fifteen minutes old, while a better one had been received and discarded.
+    // These readings keep the `sentAt` of the payload that carried them, so a
+    // retained one still ages honestly against the other sources.
+    private var usageStatusBySession: [String: ClaudeCodeStatusEvent] = [:]
 
     // Transcripts are append-only history: a file whose modification date and
     // size are unchanged decodes to the same summary, so polling reuses it
@@ -89,6 +98,9 @@ public actor ClaudeCodeConnector: ProviderConnector, AccountUsageIngesting {
         }
         if let existing = statusEventsBySession[event.sessionID], existing.sentAt > event.sentAt { return }
         statusEventsBySession[event.sessionID] = event
+        if event.fiveHour != nil || event.sevenDay != nil {
+            usageStatusBySession[event.sessionID] = event
+        }
         pruneStatusEvents()
     }
 
@@ -121,9 +133,7 @@ public actor ClaudeCodeConnector: ProviderConnector, AccountUsageIngesting {
             ? statusEventsBySession.values.max { $0.sentAt < $1.sentAt }
             : nil
         let latestUsageStatus = sourceMode.usesRealtimeData
-            ? statusEventsBySession.values
-                .filter { $0.fiveHour != nil || $0.sevenDay != nil }
-                .max { $0.sentAt < $1.sentAt }
+            ? usageStatusBySession.values.max { $0.sentAt < $1.sentAt }
             : nil
         let hasLocalData = sourceMode.usesLocalData && fileManager.fileExists(atPath: projectsURL.path)
         let hasRealtimeData = sourceMode.usesRealtimeData
@@ -529,5 +539,6 @@ public actor ClaudeCodeConnector: ProviderConnector, AccountUsageIngesting {
     private func pruneStatusEvents() {
         let cutoffMilliseconds = Int64(now().addingTimeInterval(-relevantAge).timeIntervalSince1970 * 1_000)
         statusEventsBySession = statusEventsBySession.filter { $0.value.sentAt >= cutoffMilliseconds }
+        usageStatusBySession = usageStatusBySession.filter { $0.value.sentAt >= cutoffMilliseconds }
     }
 }
