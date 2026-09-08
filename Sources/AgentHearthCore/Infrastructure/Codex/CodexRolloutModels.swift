@@ -70,6 +70,10 @@ struct ParsedRollout {
 struct MeasuredUsage {
     let windows: [UsageWindow]
     let measuredAt: Date
+    /// Which quota family reported this (`limit_id`). Readings from one family
+    /// supersede each other over time; readings from different families stand
+    /// side by side and are compared for severity.
+    let family: String?
 }
 
 struct CodexRolloutRecord: Decodable {
@@ -118,6 +122,14 @@ struct CodexTokenUsage: Decodable {
 struct CodexRateLimits: Decodable {
     let primary: CodexRateLimitWindow?
     let secondary: CodexRateLimitWindow?
+    /// Names the quota family, e.g. `codex`. An account can be reported under
+    /// several at once, each with its own windows.
+    let limitId: String?
+
+    enum CodingKeys: String, CodingKey {
+        case primary, secondary
+        case limitId = "limit_id"
+    }
 }
 
 struct CodexRateLimitWindow: Decodable {
