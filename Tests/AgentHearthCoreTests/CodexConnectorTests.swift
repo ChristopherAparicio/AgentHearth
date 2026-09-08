@@ -35,6 +35,36 @@ final class CodexConnectorTests: XCTestCase {
         XCTAssertNil(snapshot.usageWindows.first { $0.label == "5 hours" })
     }
 
+    /// Two readings of the same quota family describe one limit at two moments,
+    /// so only the later one is still true. Ranking them by percentage let a
+    /// reading hours old outrank one seconds old purely for being higher, and
+    /// the weekly bar then sat on a figure the account had already moved past.
+    func testNewerReadingOfAFamilyReplacesAnOlderHigherOne() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let rollout = root.appending(path: "2026/09/08/rollout-rolling.jsonl")
+        try FileManager.default.createDirectory(at: rollout.deletingLastPathComponent(), withIntermediateDirectories: true)
+
+        // One family, two readings of its weekly window. That window is rolling,
+        // so the older reading's reset (t=9000) still sits in the future at
+        // "now" (t=2000) and the reset guard cannot drop it — recency is the
+        // only thing separating the two.
+        let contents = """
+        {"timestamp":"1970-01-01T00:16:00.000Z","type":"session_meta","payload":{"id":"codex-1","cwd":"/tmp/AgentHearth","source":"cli","model_provider":"openai"}}
+        {"timestamp":"1970-01-01T00:16:40.000Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":1200,"cached_input_tokens":1000}},"rate_limits":{"limit_id":"codex","primary":{"used_percent":27,"window_minutes":10080,"resets_at":9000}}}}
+        {"timestamp":"1970-01-01T00:33:19.000Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":1300,"cached_input_tokens":1100}},"rate_limits":{"limit_id":"codex","primary":{"used_percent":22,"window_minutes":10080,"resets_at":9600}}}}
+        """
+        try Data(contents.utf8).write(to: rollout)
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 1_999)], ofItemAtPath: rollout.path)
+
+        let connector = CodexConnector(sessionsURL: root, now: { Date(timeIntervalSince1970: 2_000) })
+        let snapshot = try await connector.snapshot()
+
+        let sevenDays = try XCTUnwrap(snapshot.usageWindows.first { $0.label == "7 days" })
+        XCTAssertEqual(sevenDays.usedFraction, 0.22, accuracy: 0.0001, "the current reading, not the higher stale one")
+        XCTAssertEqual(sevenDays.resetsAt, Date(timeIntervalSince1970: 9_600), "and its own reset travels with it")
+    }
+
     func testReadsWorkingSessionCacheAndQuotaFromRollout() async throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }

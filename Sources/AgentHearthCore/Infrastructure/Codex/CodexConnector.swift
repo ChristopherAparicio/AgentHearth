@@ -381,25 +381,54 @@ public actor CodexConnector: ProviderConnector {
     /// Codex reports several quota families side by side (`limit_id`, e.g. an
     /// account migrated to a new plan bucket), each with its own windows. Taking
     /// only the newest event let a fresh 0% from one family hide another family
-    /// sitting at 99% — the limit actually blocking the user. Per window, keep
-    /// the most constraining measurement across families, and drop windows whose
-    /// reset time has passed: those have rolled over, so their last reading no
-    /// longer describes the current period.
+    /// sitting at 99% — the limit actually blocking the user.
+    ///
+    /// Severity therefore decides *between* families, but never across time: two
+    /// readings from the same family describe the same quota at two moments, and
+    /// only the later one is still true. Ranking those by percentage instead let
+    /// a reading hours old outrank one seconds old purely for being higher, and
+    /// the stale figure then stuck until it aged out entirely — days, for a
+    /// weekly window.
+    ///
+    /// Dropping windows whose reset has passed does not cover this on its own:
+    /// Codex's weekly window is rolling, so a stale reading's reset keeps
+    /// sitting in the future even as the reading itself goes out of date.
     private func bindingUsageWindows(_ measurements: [MeasuredUsage]) -> [UsageWindow] {
         let currentTime = now()
+
+        // One reading per family and window: the newest, since it supersedes
+        // every earlier reading of the same quota.
+        var currentPerFamily: [FamilyWindow: UsageWindow] = [:]
+        for measurement in measurements {
+            for window in measurement.windows {
+                // A window whose reset has passed has rolled over, so its last
+                // reading no longer describes the current period.
+                if let resetsAt = window.resetsAt, resetsAt <= currentTime { continue }
+                let key = FamilyWindow(family: measurement.family, windowID: window.id)
+                if let held = currentPerFamily[key], held.measuredAt >= window.measuredAt { continue }
+                currentPerFamily[key] = window
+            }
+        }
+
+        // Between families, the most constraining current reading is the one
+        // actually limiting the user.
         var byWindow: [String: UsageWindow] = [:]
-        for window in measurements.flatMap(\.windows) {
-            if let resetsAt = window.resetsAt, resetsAt <= currentTime { continue }
+        for window in currentPerFamily.values {
             guard let existing = byWindow[window.id] else {
                 byWindow[window.id] = window
                 continue
             }
-            // Higher utilization wins; on a tie the more recent reading does.
             if (window.usedFraction, window.measuredAt) > (existing.usedFraction, existing.measuredAt) {
                 byWindow[window.id] = window
             }
         }
         return byWindow.values.sorted { $0.id < $1.id }
+    }
+
+    /// Identifies one quota window within one family.
+    private struct FamilyWindow: Hashable {
+        let family: String?
+        let windowID: String
     }
 
     private func makeUsage(rateLimits: CodexRateLimits?, measuredAt: Date) -> MeasuredUsage? {
@@ -421,7 +450,9 @@ public actor CodexConnector: ProviderConnector {
                 measuredAt: measuredAt
             )
         }
-        return windows.isEmpty ? nil : MeasuredUsage(windows: windows, measuredAt: measuredAt)
+        return windows.isEmpty
+            ? nil
+            : MeasuredUsage(windows: windows, measuredAt: measuredAt, family: rateLimits.limitId)
     }
 
 }
