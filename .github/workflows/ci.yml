@@ -12,6 +12,10 @@ jobs:
   test:
     name: Build and test (macOS)
     runs-on: macos-latest
+    # Without a cap, a hung test run holds a runner until GitHub's six-hour
+    # ceiling. The suite finishes in seconds, so anything past twenty minutes
+    # is a hang, not slow work.
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -34,10 +38,17 @@ jobs:
         run: xcodegen generate
 
       - name: Test
+        # Per-test timeouts so a hang is reported as a named failing test
+        # rather than a job that stops producing output. Every test in the
+        # suite runs in well under a second, so two minutes only ever fires on
+        # something genuinely stuck.
         run: |
           xcodebuild -project AgentHearth.xcodeproj -scheme AgentHearth \
             -configuration Debug CODE_SIGNING_ALLOWED=NO \
-            -destination 'platform=macOS' test
+            -destination 'platform=macOS' \
+            -test-timeouts-enabled YES \
+            -maximum-test-execution-time-allowance 120 \
+            test
 
   python:
     name: Check bundled Python bridges
