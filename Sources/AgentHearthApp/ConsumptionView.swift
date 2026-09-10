@@ -112,12 +112,12 @@ struct ConsumptionView: View {
                         )
                     )
                     HistoryMetricCard(
-                        title: "Spent in range",
-                        value: "\(Int(timeline.consumedPoints.rounded())) pts",
-                        detail: rangeLabel,
+                        title: "Window spent",
+                        value: "\(Int(timeline.consumedPoints.rounded()))%",
+                        detail: "of the window \(rangeLabel)",
                         symbol: "arrow.down.right.circle",
                         color: .orange,
-                        info: "Percentage points of this window consumed across the range. Rises between readings are summed, so a window that reset mid-range still reports what was actually spent."
+                        info: "How much of this window was consumed across the range, as a percent of one full window. Rises between readings are summed, so a window that reset mid-range still reports what was actually spent — and a range covering several resets can exceed 100%."
                     )
                     HistoryMetricCard(
                         title: "Fastest stretch",
@@ -125,7 +125,7 @@ struct ConsumptionView: View {
                         detail: surgeDetail(timeline.steepestSurge),
                         symbol: "bolt.fill",
                         color: .red,
-                        info: "The steepest pair of readings in the range — where the window actually went. Ranked by rate, so a long quiet gap cannot outrank a genuine burst."
+                        info: "The steepest pair of readings in the range — where the window actually went, as a percent of one full window. Ranked by rate, so a long quiet gap cannot outrank a genuine burst."
                     )
                 }
                 chart(timeline)
@@ -332,13 +332,13 @@ struct ConsumptionView: View {
 
     private func surgeValue(_ surge: UsageSurge?) -> String {
         guard let surge else { return "—" }
-        return "\(Int(surge.gainedPoints.rounded())) pts"
+        return "\(Int(surge.gainedPoints.rounded()))%"
     }
 
     private func surgeDetail(_ surge: UsageSurge?) -> String {
         guard let surge else { return "No rise measured" }
         let minutes = max(1, Int((surge.elapsed / 60).rounded()))
-        return "in \(minutes) min at \(surge.startedAt.formatted(date: .omitted, time: .shortened))"
+        return "of the window in \(minutes) min, at \(surge.startedAt.formatted(date: .omitted, time: .shortened))"
     }
 
     private func context(_ session: SessionHistorySummary) -> String {

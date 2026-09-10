@@ -211,7 +211,7 @@ public actor SnapshotAlertDetector {
     ) -> AgentAlert {
         let burstStart = window.measuredAt.addingTimeInterval(-burn.elapsed)
         let suspect = topSuspect(among: sessions, providerID: providerID, since: burstStart)
-        var summary = "\(providerID.rawValue) · \(window.label) +\(burn.gainedPoints) pts in \(minutesText(burn.elapsed))"
+        var summary = "\(providerID.rawValue) · \(window.label) +\(burn.gainedPoints)% of window in \(minutesText(burn.elapsed))"
         if let suspect {
             summary += " — \(suspectText(suspect))"
         }

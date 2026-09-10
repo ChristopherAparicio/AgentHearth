@@ -289,7 +289,7 @@ final class SnapshotAlertDetectorTests: XCTestCase {
         let burn = try XCTUnwrap(alerts.first { $0.type == "usage.burn" })
         XCTAssertEqual(burn.sessionTarget?.sessionID, "runaway")
         XCTAssertTrue(burn.summary.contains("api-rewrite"), burn.summary)
-        XCTAssertTrue(burn.summary.contains("+25 pts"), burn.summary)
+        XCTAssertTrue(burn.summary.contains("+25% of window"), burn.summary)
     }
 
     func testBurstReportsHowLongTheSuspectHasBeenWorking() async {
