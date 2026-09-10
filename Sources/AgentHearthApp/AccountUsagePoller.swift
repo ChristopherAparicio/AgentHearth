@@ -7,6 +7,13 @@ import Observation
 /// exercised with a fake instead of the Keychain-backed fetcher.
 protocol AccountUsageFetching: Sendable {
     func fetch() async -> AccountUsageFetchOutcome
+    /// Drops any remembered credential verdict so the next fetch reopens the
+    /// stores, dialogs and all.
+    func forgetRememberedFailure() async
+}
+
+extension AccountUsageFetching {
+    func forgetRememberedFailure() async {}
 }
 
 extension ClaudeAccountUsageFetcher: AccountUsageFetching {}
@@ -78,10 +85,15 @@ final class AccountUsagePoller {
         showsScopedWeeklyLimits ? usage : usage.withoutScopedWeekly()
     }
 
-    /// Forgets the backoff so the next refresh fetches immediately.
-    func retryNow() {
+    /// Forgets the backoff so the next refresh fetches immediately, and drops
+    /// any remembered credential verdict: someone pressing Retry has usually
+    /// just changed something no fingerprint can see — their mind about a
+    /// consent dialog, most often — so this is the one path that should pay
+    /// for the Keychain reads again.
+    func retryNow() async {
         guard isEnabled else { return }
         nextFetchAt = .distantPast
+        await fetcher.forgetRememberedFailure()
     }
 
     /// After the user launched Claude Code or its sign-in: fetch again shortly,

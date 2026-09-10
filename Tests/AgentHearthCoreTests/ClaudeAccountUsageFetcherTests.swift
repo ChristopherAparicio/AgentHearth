@@ -35,18 +35,31 @@ final class StubURLProtocol: URLProtocol {
 
 /// Stands in for the Keychain so the credential classification can be driven
 /// from fixed stores, in the order a real sweep would see them.
-private struct StubCredentialStore: ClaudeCredentialStoreReading {
+private final class StubCredentialStore: ClaudeCredentialStoreReading, @unchecked Sendable {
     /// Service name to what opening it yields, newest store first.
     var items: [(service: String, read: ClaudeCredentialStoreRead)] = []
     var fallback: Data?
+    /// Bumped by a test to simulate Claude Code writing a new token.
+    var generation = 0
+    /// How many times a store was actually opened — the reads that cost the
+    /// user a consent dialog.
+    private(set) var openCount = 0
+
+    init(items: [(service: String, read: ClaudeCredentialStoreRead)] = [], fallback: Data? = nil) {
+        self.items = items
+        self.fallback = fallback
+    }
 
     func services() -> [String] { items.map(\.service) }
 
     func read(service: String) -> ClaudeCredentialStoreRead {
-        items.first { $0.service == service }?.read ?? .missing
+        openCount += 1
+        return items.first { $0.service == service }?.read ?? .missing
     }
 
     func fallbackStore() -> Data? { fallback }
+
+    func stateToken() -> String { "gen-\(generation)" }
 }
 
 final class ClaudeAccountUsageFetcherTests: XCTestCase {
@@ -217,6 +230,48 @@ final class ClaudeAccountUsageFetcherTests: XCTestCase {
     func testNoStoresAtAllReportsSignedOut() async {
         let outcome = await makeFetcher(stores: StubCredentialStore()).fetch()
         guard case .signedOut = outcome else { return XCTFail("expected signedOut, got \(outcome)") }
+    }
+
+    /// A fruitless sweep opens every credential item, and each of those reads
+    /// can raise a consent dialog. Repeating it on the next poll asked the user
+    /// for a password again to reach the identical conclusion, several times an
+    /// hour. The verdict is now held until the stores themselves differ.
+    func testAFruitlessSweepIsNotRepeatedWhileTheStoresAreUnchanged() async {
+        let store = StubCredentialStore(items: [
+            ("Claude Code-credentials", .data(Self.husk)),
+            ("Claude Code-credentials-00000000000002", .data(Self.lapsedBeyondRefresh)),
+        ])
+        let fetcher = makeFetcher(stores: store)
+
+        guard case .signedOut = await fetcher.fetch() else { return XCTFail("expected signedOut") }
+        let afterFirst = store.openCount
+        XCTAssertEqual(afterFirst, 2, "the first sweep opens every store")
+
+        guard case .signedOut = await fetcher.fetch() else { return XCTFail("expected signedOut") }
+        guard case .signedOut = await fetcher.fetch() else { return XCTFail("expected signedOut") }
+        XCTAssertEqual(store.openCount, afterFirst, "later polls reach the same verdict without opening anything")
+
+        // Claude Code writes a new token: the verdict no longer holds.
+        store.generation += 1
+        _ = await fetcher.fetch()
+        XCTAssertGreaterThan(store.openCount, afterFirst, "a changed store is swept again")
+    }
+
+    /// Retry is the one path that should pay for the reads again: someone
+    /// pressing it has usually just changed their mind about a dialog, which
+    /// no fingerprint of the stores can detect.
+    func testAnExplicitRetryReopensTheStores() async {
+        let store = StubCredentialStore(items: [("Claude Code-credentials", .denied)])
+        let fetcher = makeFetcher(stores: store)
+
+        guard case .keychainAccessDenied = await fetcher.fetch() else { return XCTFail("expected denied") }
+        let afterFirst = store.openCount
+        _ = await fetcher.fetch()
+        XCTAssertEqual(store.openCount, afterFirst, "a plain poll stays quiet")
+
+        await fetcher.forgetRememberedFailure()
+        _ = await fetcher.fetch()
+        XCTAssertGreaterThan(store.openCount, afterFirst, "an explicit retry asks again")
     }
 
     // Fixtures, in the shapes Claude Code actually writes. Clock is 10_000s.
