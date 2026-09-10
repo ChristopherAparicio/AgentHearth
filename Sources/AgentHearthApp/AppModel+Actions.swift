@@ -126,10 +126,13 @@ extension AppModel {
         }
     }
 
-    /// Re-fetches the Claude account usage right away, ignoring the backoff.
+    /// Re-fetches the Claude account usage right away, ignoring the backoff
+    /// and any remembered credential verdict.
     func retryClaudeUsageFetch() {
-        accountUsagePoller.retryNow()
-        Task { await refresh() }
+        Task {
+            await accountUsagePoller.retryNow()
+            await refresh()
+        }
     }
 
     func setProvider(_ providerID: AgentProviderID, visible: Bool) {

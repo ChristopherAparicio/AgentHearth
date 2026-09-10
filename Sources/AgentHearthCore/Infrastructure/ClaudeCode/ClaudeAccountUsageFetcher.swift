@@ -23,6 +23,11 @@ public protocol ClaudeCredentialStoreReading: Sendable {
     func read(service: String) -> ClaudeCredentialStoreRead
     /// Claude Code's fallback store, used when the Keychain is unavailable.
     func fallbackStore() -> Data?
+    /// Identifies the current state of every store without opening any of
+    /// them. Attributes and file metadata are readable without consent, so
+    /// this costs nothing and, crucially, raises no dialog — which is what
+    /// lets a fruitless sweep be remembered rather than repeated.
+    func stateToken() -> String
 }
 
 /// The real store: Claude Code's generic-password items plus its JSON fallback.
@@ -47,9 +52,25 @@ public struct KeychainClaudeCredentialStore: ClaudeCredentialStoreReading {
     }
 
     public func services() -> [String] {
-        // Attributes only (never prompts): find every candidate and order it,
-        // so the data reads that follow — each of which may raise the consent
-        // dialog — can stop at the first usable token.
+        candidates().map(\.service)
+    }
+
+    public func stateToken() -> String {
+        // Modification dates change whenever Claude Code writes a new token,
+        // which is exactly when a previous sweep's conclusion stops being
+        // valid. The fallback file is folded in for the same reason.
+        var parts = candidates().map { "\($0.service)@\($0.modifiedAt.timeIntervalSince1970)" }
+        if let attributes = try? FileManager.default.attributesOfItem(atPath: fallbackURL.path) {
+            let modifiedAt = (attributes[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+            let size = (attributes[.size] as? NSNumber)?.intValue ?? 0
+            parts.append("file@\(modifiedAt)/\(size)")
+        }
+        return parts.joined(separator: "|")
+    }
+
+    /// The candidate items, newest first. Attributes only, so this never
+    /// prompts — unlike the data reads it orders.
+    private func candidates() -> [(service: String, modifiedAt: Date)] {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecReturnAttributes as String: true,
@@ -67,7 +88,6 @@ public struct KeychainClaudeCredentialStore: ClaudeCredentialStoreReading {
                 return (service, item[kSecAttrModificationDate as String] as? Date ?? .distantPast)
             }
             .sorted { $0.modifiedAt > $1.modifiedAt }
-            .map(\.service)
     }
 
     public func read(service: String) -> ClaudeCredentialStoreRead {
@@ -130,13 +150,30 @@ public struct ClaudeAccountUsageFetcher: Sendable {
             credentials = cached
         } else {
             await credentialCache.clear()
-            switch readCredentials() {
+            // A sweep that found nothing usable opens every credential item,
+            // and each of those reads can raise a consent dialog. Repeating it
+            // on the next poll asks the user for a password again to reach the
+            // identical conclusion, since nothing can change until Claude Code
+            // writes a token. Remember the verdict and re-sweep only once the
+            // stores actually differ — which costs no dialog to check.
+            let token = stores.stateToken()
+            if let remembered = await credentialCache.rememberedFailure(for: token) {
+                return remembered
+            }
+            let lookup = readCredentials()
+            switch lookup {
             case let .found(fresh):
                 credentials = fresh
                 await credentialCache.store(fresh)
-            case .expiredButRefreshable: return .tokenExpired
-            case .signedOut: return .signedOut
-            case .accessDenied: return .keychainAccessDenied
+            case .expiredButRefreshable:
+                await credentialCache.rememberFailure(.tokenExpired, for: token)
+                return .tokenExpired
+            case .signedOut:
+                await credentialCache.rememberFailure(.signedOut, for: token)
+                return .signedOut
+            case .accessDenied:
+                await credentialCache.rememberFailure(.keychainAccessDenied, for: token)
+                return .keychainAccessDenied
             }
         }
         let outcome = await fetchUsage(accessToken: credentials.accessToken)
@@ -145,6 +182,14 @@ public struct ClaudeAccountUsageFetcher: Sendable {
             await credentialCache.clear()
         }
         return outcome
+    }
+
+    /// Drops a remembered sweep verdict so the next fetch opens the stores
+    /// again. Wired to the explicit "Retry Now" action: a user asking for a
+    /// retry has usually just changed something the fingerprint cannot see —
+    /// their mind about a consent dialog, most often.
+    public func forgetRememberedFailure() async {
+        await credentialCache.forgetFailure()
     }
 
     private func isExpired(_ credentials: Credentials) -> Bool {
@@ -277,12 +322,30 @@ public struct ClaudeAccountUsageFetcher: Sendable {
 /// Process-lifetime holder for the last Keychain read (see `fetch()`).
 private actor CredentialCache {
     private(set) var current: ClaudeAccountUsageFetcher.Credentials?
+    /// The verdict of the last fruitless sweep, tied to the store fingerprint
+    /// it was reached under. Held so the dialogs it cost are not paid again
+    /// for an answer that cannot have changed.
+    private var failure: (token: String, outcome: AccountUsageFetchOutcome)?
 
     func store(_ credentials: ClaudeAccountUsageFetcher.Credentials) {
         current = credentials
+        failure = nil
     }
 
     func clear() {
         current = nil
+    }
+
+    func rememberedFailure(for token: String) -> AccountUsageFetchOutcome? {
+        guard let failure, failure.token == token else { return nil }
+        return failure.outcome
+    }
+
+    func rememberFailure(_ outcome: AccountUsageFetchOutcome, for token: String) {
+        failure = (token, outcome)
+    }
+
+    func forgetFailure() {
+        failure = nil
     }
 }
