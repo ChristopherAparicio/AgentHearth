@@ -108,7 +108,7 @@ targets:
         NSHighResolutionCapable: true
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.guardix.agenthearth
+        PRODUCT_BUNDLE_IDENTIFIER: com.guardix.AgentHearth
         PRODUCT_NAME: AgentHearth
         CODE_SIGN_STYLE: Automatic
         # Required for notarization. Debug/test builds pass
