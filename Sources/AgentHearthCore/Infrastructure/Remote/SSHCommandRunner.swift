@@ -137,11 +137,17 @@ public actor SystemSSHCommandRunner: SSHCommandRunning {
     /// SSH path and exercised directly by tests with large outputs. When
     /// `timeout` elapses first, the child is terminated and the result is
     /// flagged `timedOut`.
+    /// `timeout` defaults to the standard bound rather than to none. A drain
+    /// that never reaches EOF has no other way to end, and the cost of getting
+    /// that wrong is not a slow call but a wedged one: a test run that holds a
+    /// CI runner until the six-hour ceiling, a refresh cycle that never
+    /// completes. Pass an explicit value to widen it; there is no way to ask
+    /// for no bound at all, deliberately.
     static func execute(
         executableURL: URL,
         arguments: [String],
         standardInput: Data?,
-        timeout: TimeInterval? = nil
+        timeout: TimeInterval = SystemSSHCommandRunner.defaultCommandTimeout
     ) async throws -> SSHCommandResult {
         let process = Process()
         let outputPipe = Pipe()
@@ -159,6 +165,15 @@ public actor SystemSSHCommandRunner: SSHCommandRunning {
             throw SSHCommandError.launchFailed(error.localizedDescription)
         }
 
+        // The child has its own descriptors for these now, so drop the
+        // parent's copies. A read reaches EOF only once *every* write end is
+        // closed, and holding these open means the drain below can outlive the
+        // child that was supposed to end it: the command finishes, nothing
+        // more is ever written, and readToEnd sits there. With no timeout —
+        // the default outside the SSH path — that wait has no end at all.
+        try? outputPipe.fileHandleForWriting.close()
+        try? errorPipe.fileHandleForWriting.close()
+
         if let standardInput {
             try? inputPipe.fileHandleForWriting.write(contentsOf: standardInput)
         }
@@ -171,7 +186,9 @@ public actor SystemSSHCommandRunner: SSHCommandRunning {
         // pipe buffer (~64 KB): the child blocks on write() while the parent
         // blocks on wait(). Awaiting the reads also frees the concurrency pool
         // instead of parking a cooperative thread — each read completes at EOF,
-        // which the child reaches when it exits (or is killed by the watchdog).
+        // which the child reaches when it exits (or is killed by the watchdog),
+        // and which is reachable at all only because the parent closed its own
+        // write ends above.
         async let outputData = readToEnd(outputPipe.fileHandleForReading)
         async let errorData = readToEnd(errorPipe.fileHandleForReading)
         let output = await outputData
