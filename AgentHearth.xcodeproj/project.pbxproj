@@ -1468,7 +1468,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.guardix.agenthearth;
+				PRODUCT_BUNDLE_IDENTIFIER = com.guardix.AgentHearth;
 				PRODUCT_NAME = AgentHearth;
 				SDKROOT = macosx;
 			};
@@ -1589,7 +1589,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.guardix.agenthearth;
+				PRODUCT_BUNDLE_IDENTIFIER = com.guardix.AgentHearth;
 				PRODUCT_NAME = AgentHearth;
 				SDKROOT = macosx;
 			};
