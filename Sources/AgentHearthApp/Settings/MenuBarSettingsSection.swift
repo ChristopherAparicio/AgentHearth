@@ -59,7 +59,10 @@ struct MenuBarSettingsSection: View {
     private func previewStrip(dark: Bool) -> some View {
         MenuBarLabelView(
             items: model.menuBarRenderedItems,
-            showsFlame: model.menuBarLayout.effectiveShowsFlame,
+            // Empty rendered items draw the flame in the real status item, so
+            // the preview has to agree or it shows nothing in exactly the case
+            // the fallback exists for.
+            showsFlame: model.menuBarLayout.effectiveShowsFlame || model.menuBarRenderedItems.isEmpty,
             baseColor: dark ? .white : .black
         )
         .padding(.horizontal, 10)

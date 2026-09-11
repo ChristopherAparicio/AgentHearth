@@ -57,6 +57,11 @@ final class AccountUsagePoller {
     /// to do. Nil while usage is flowing, and after a merely transient failure.
     private(set) var remedy: AccountUsageRemedy?
     private var nextFetchAt: Date = .distantPast
+    /// True while a fetch is in flight. Without it, the opt-in's immediate
+    /// fetch and the polling loop both pass the schedule check — the schedule
+    /// is only rewritten once the fetch returns — and sweep the Keychain at
+    /// the same time, showing the consent dialogs twice over.
+    private var isFetching = false
     /// While a sign-in the user just started is still plausibly in flight,
     /// credential failures retry in seconds rather than minutes — a half-hour
     /// backoff would strand someone who finished logging in two minutes ago.
@@ -137,7 +142,9 @@ final class AccountUsagePoller {
     /// failure), only when opted in. Success injects the authoritative windows —
     /// with reset timestamps — into the Claude connector.
     func refreshIfNeeded() async {
-        guard isEnabled, Date() >= nextFetchAt else { return }
+        guard isEnabled, !isFetching, Date() >= nextFetchAt else { return }
+        isFetching = true
+        defer { isFetching = false }
         switch await fetcher.fetch() {
         case let .usage(usage):
             remedy = nil

@@ -170,6 +170,11 @@ public struct ClaudeAccountUsageFetcher: Sendable {
     }
 
     public func fetch() async -> AccountUsageFetchOutcome {
+        // Captured before anything can block. A sweep can sit for minutes on a
+        // consent dialog, and the user may press Retry in the meantime; the
+        // verdict this call ends up with must not overwrite the fresh slate
+        // that Retry asked for.
+        let generation = await credentialCache.generation
         let credentials: Credentials
         if let cached = await credentialCache.current, !isExpired(cached) {
             credentials = cached
@@ -191,20 +196,24 @@ public struct ClaudeAccountUsageFetcher: Sendable {
                 credentials = fresh
                 await credentialCache.store(fresh)
             case .expiredButRefreshable:
-                await credentialCache.rememberFailure(.tokenExpired, for: token)
+                await credentialCache.rememberFailure(.tokenExpired, for: token, generation: generation)
                 return .tokenExpired
             case .signedOut:
-                await credentialCache.rememberFailure(.signedOut, for: token)
+                await credentialCache.rememberFailure(.signedOut, for: token, generation: generation)
                 return .signedOut
             case .accessDenied:
-                await credentialCache.rememberFailure(.keychainAccessDenied, for: token)
+                await credentialCache.rememberFailure(.keychainAccessDenied, for: token, generation: generation)
                 return .keychainAccessDenied
             }
         }
         let outcome = await fetchUsage(accessToken: credentials.accessToken)
         if case .tokenExpired = outcome {
-            // Claude Code rotated the token: re-read the Keychain next time.
+            // Anthropic rejected a token the stores still consider valid, so
+            // re-reading them would hand back the same one. Clear the cached
+            // token but remember the verdict, or every poll would reopen the
+            // Keychain — dialogs included — to be told the same thing.
             await credentialCache.clear()
+            await credentialCache.rememberFailure(.tokenExpired, for: stores.stateToken(), generation: generation)
         }
         return outcome
     }
@@ -272,18 +281,21 @@ public struct ClaudeAccountUsageFetcher: Sendable {
     ///
     /// Read separately from ``parseCredentials`` because a store can carry a
     /// live refresh token while its access token is already blank or lapsed.
-    /// A record with no `refreshTokenExpiresAt` counts as *not* refreshable: we
-    /// cannot verify such a token, and sending someone to sign in when the CLI
-    /// could have refreshed itself merely costs them a login, whereas the
-    /// opposite mistake sends them to a button that does nothing at all.
     static func hasLiveRefreshToken(_ data: Data, now: Date) -> Bool {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let oauth = root["claudeAiOauth"] as? [String: Any],
               let token = oauth["refreshToken"] as? String,
-              !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              let milliseconds = oauth["refreshTokenExpiresAt"] as? Double,
-              milliseconds > 0
+              !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else { return false }
+        // Claude Code's Keychain items record `refreshTokenExpiresAt`; its
+        // fallback JSON file does not. Absence therefore cannot mean "dead",
+        // or every file-backed sign-in would be reported as signed out and
+        // sent to a full re-login. An unverifiable refresh token counts as
+        // live: the advice it produces — run Claude Code once — costs a user
+        // far less than an interactive sign-in they did not need.
+        guard let milliseconds = oauth["refreshTokenExpiresAt"] as? Double, milliseconds > 0 else {
+            return true
+        }
         return Date(timeIntervalSince1970: milliseconds / 1_000) > now
     }
 
@@ -310,14 +322,20 @@ public struct ClaudeAccountUsageFetcher: Sendable {
         var opened: [Data] = []
         var wasDenied = false
 
-        for store in stores.services() {
+        for (index, store) in stores.services().enumerated() {
             // Opening a store costs the user a consent dialog, so don't open
             // one that cannot possibly help. Claude Code rewrites its item on
             // every token refresh, so the write date bounds what the item can
             // hold: past the refresh token's own lifetime, neither the access
             // token nor the refresh behind it is still alive. Skipping those
             // is the difference between one dialog and one per stale profile.
-            if let modifiedAt = store.modifiedAt,
+            //
+            // The newest store is always opened, however old it is. Otherwise
+            // a sweep could skip everything and still return a verdict — a
+            // positive claim that no sign-in exists, reached without reading
+            // anything — and the age rule would be deciding what only the
+            // contents can say.
+            if index > 0, let modifiedAt = store.modifiedAt,
                modifiedAt < current.addingTimeInterval(-Self.maximumUsefulAge) {
                 continue
             }
@@ -361,6 +379,9 @@ private actor CredentialCache {
     /// it was reached under. Held so the dialogs it cost are not paid again
     /// for an answer that cannot have changed.
     private var failure: (token: String, outcome: AccountUsageFetchOutcome)?
+    /// Bumped whenever a remembered verdict is dropped, so a sweep that began
+    /// earlier cannot write its own conclusion over the fresh slate.
+    private(set) var generation = 0
 
     func store(_ credentials: ClaudeAccountUsageFetcher.Credentials) {
         current = credentials
@@ -376,11 +397,13 @@ private actor CredentialCache {
         return failure.outcome
     }
 
-    func rememberFailure(_ outcome: AccountUsageFetchOutcome, for token: String) {
+    func rememberFailure(_ outcome: AccountUsageFetchOutcome, for token: String, generation: Int) {
+        guard generation == self.generation else { return }
         failure = (token, outcome)
     }
 
     func forgetFailure() {
         failure = nil
+        generation += 1
     }
 }

@@ -189,8 +189,11 @@ first time, and you may see **two** dialogs in a row. That is expected:
    to the item, hence the second dialog.
 2. *AgentHearth wants to use your confidential information stored in
    "Claude Code-credentials"* — the item's own access list. Choose
-   **Always Allow** to record the choice; AgentHearth is signed with a stable
-   Developer ID identity, so the choice survives reinstalls via `task install`.
+   **Always Allow** to record the choice. The choice is recorded against the
+   app's code-signing requirement, which embeds its bundle identifier, so it
+   survives reinstalls via `task install` but not a change of identifier — and
+   not Claude Code rewriting the item itself, which it does on every token
+   refresh. Expect to answer again occasionally.
 
 To stop the first dialog from coming back, open Keychain Access, right-click
 the *login* keychain, choose *Change Settings*, and disable automatic locking.
