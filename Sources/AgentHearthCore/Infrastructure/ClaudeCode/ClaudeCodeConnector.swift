@@ -96,11 +96,15 @@ public actor ClaudeCodeConnector: ProviderConnector, AccountUsageIngesting {
         guard !event.sessionID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw ClaudeCodeHookEventError.invalidSession
         }
-        if let existing = statusEventsBySession[event.sessionID], existing.sentAt > event.sentAt { return }
-        statusEventsBySession[event.sessionID] = event
-        if event.fiveHour != nil || event.sevenDay != nil {
+        if event.fiveHour != nil || event.sevenDay != nil,
+           usageStatusBySession[event.sessionID].map({ $0.sentAt < event.sentAt }) ?? true {
+            // Judged against the retained reading, not the latest event: a
+            // limits-bearing payload delayed behind a plain one is still newer
+            // than what is being held, and is the better reading to keep.
             usageStatusBySession[event.sessionID] = event
         }
+        if let existing = statusEventsBySession[event.sessionID], existing.sentAt > event.sentAt { return }
+        statusEventsBySession[event.sessionID] = event
         pruneStatusEvents()
     }
 
@@ -181,11 +185,22 @@ public actor ClaudeCodeConnector: ProviderConnector, AccountUsageIngesting {
 
         if let status {
             let at = Date(millisecondsSince1970: status.sentAt)
-            if let window = status.fiveHour {
-                add("claude-5h", window.usedPercentage / 100, at, window.resetsAt.map(Date.init(timeIntervalSince1970:)))
+            // A window whose reset has passed has rolled over, so its last
+            // reading describes a period that is over. That matters more for
+            // this source than the others: the relayed reading is retained
+            // across payloads that carry no limits, so without this it could
+            // sit at yesterday's 90% for as long as it is kept.
+            func live(_ window: ClaudeCodeRateLimitWindow?) -> (Double, Date?)? {
+                guard let window else { return nil }
+                let resetsAt = window.resetsAt.map(Date.init(timeIntervalSince1970:))
+                if let resetsAt, resetsAt <= now() { return nil }
+                return (window.usedPercentage / 100, resetsAt)
             }
-            if let window = status.sevenDay {
-                add("claude-7d", window.usedPercentage / 100, at, window.resetsAt.map(Date.init(timeIntervalSince1970:)))
+            if let (utilization, resetsAt) = live(status.fiveHour) {
+                add("claude-5h", utilization, at, resetsAt)
+            }
+            if let (utilization, resetsAt) = live(status.sevenDay) {
+                add("claude-7d", utilization, at, resetsAt)
             }
         }
         if let local {

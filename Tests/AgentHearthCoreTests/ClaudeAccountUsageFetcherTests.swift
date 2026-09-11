@@ -163,9 +163,10 @@ final class ClaudeAccountUsageFetcherTests: XCTestCase {
             ClaudeAccountUsageFetcher.hasLiveRefreshToken(store(refreshToken: "", refreshExpiresAt: 20_000_000), now: now),
             "the logged-out husk Claude Code leaves behind blanks both tokens"
         )
-        XCTAssertFalse(
+        XCTAssertTrue(
             ClaudeAccountUsageFetcher.hasLiveRefreshToken(store(refreshToken: "r", refreshExpiresAt: nil), now: now),
-            "an unverifiable refresh token counts as unusable: pointing the user at a sign-in always works"
+            "Claude Code's fallback file records no expiry at all, so absence cannot mean dead — "
+                + "every file-backed sign-in would otherwise be reported as signed out"
         )
         XCTAssertFalse(ClaudeAccountUsageFetcher.hasLiveRefreshToken(Data("not json".utf8), now: now))
     }
@@ -267,6 +268,21 @@ final class ClaudeAccountUsageFetcherTests: XCTestCase {
 
         guard case .usage = await makeFetcher(stores: store).fetch() else { return XCTFail("expected usage") }
         XCTAssertEqual(store.openCount, 2, "the husk, then the recent profile — the ancient one stays shut")
+    }
+
+    /// A verdict of "no sign-in exists" is a positive claim, and the age rule
+    /// must never be what produces it. However old everything is, the newest
+    /// store is opened, so the answer comes from contents rather than dates.
+    func testTheNewestStoreIsOpenedHoweverOldItIs() async {
+        let year: TimeInterval = 365 * 24 * 60 * 60
+        let store = StubCredentialStore(items: [
+            ("Claude Code-credentials", year, .data(Self.lapsedButRefreshable)),
+            ("Claude Code-credentials-00000000000002", year, .data(Self.live)),
+        ])
+
+        let outcome = await makeFetcher(stores: store).fetch()
+        guard case .tokenExpired = outcome else { return XCTFail("expected tokenExpired, got \(outcome)") }
+        XCTAssertEqual(store.openCount, 1, "the newest was read despite its age; the one behind it was not")
     }
 
     /// A fruitless sweep opens every credential item, and each of those reads

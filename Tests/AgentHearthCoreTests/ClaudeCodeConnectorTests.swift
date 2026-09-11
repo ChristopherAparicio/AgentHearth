@@ -316,6 +316,65 @@ final class ClaudeCodeConnectorTests: XCTestCase {
         XCTAssertEqual(snapshot.usageWindows.first { $0.id == "claude-7d" }?.usedFraction ?? 0, 0.18, accuracy: 0.0001)
     }
 
+    /// The relayed reading is retained across payloads that carry no limits,
+    /// which is what keeps a figure on screen between status-line renders. But
+    /// a window whose reset has passed describes a period that is over: without
+    /// a rollover guard the card could sit at yesterday's 90% for as long as
+    /// the reading is kept — days, for a weekly window.
+    func testARelayedWindowIsDroppedOnceItsResetHasPassed() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let connector = ClaudeCodeConnector(
+            projectsURL: root,
+            planUsageHistoryURL: root.appending(path: "missing.json"),
+            now: { Date(timeIntervalSince1970: 5_000) }
+        )
+
+        try await connector.ingest(ClaudeCodeStatusEvent(
+            sessionID: "s-1",
+            // The 5h window rolled over at t=4_000; the 7d one has not.
+            fiveHour: .init(usedPercentage: 90, resetsAt: 4_000),
+            sevenDay: .init(usedPercentage: 30, resetsAt: 9_000),
+            sentAt: 1_000_000
+        ))
+        let snapshot = try await connector.snapshot()
+
+        XCTAssertNil(
+            snapshot.usageWindows.first { $0.id == "claude-5h" },
+            "the lapsed window is gone rather than frozen at 90%"
+        )
+        XCTAssertEqual(snapshot.usageWindows.first { $0.id == "claude-7d" }?.usedFraction ?? 0, 0.30, accuracy: 0.0001)
+    }
+
+    /// A limits-bearing payload delayed behind a plain one is still newer than
+    /// the reading being held, so it must replace it. Judged against the
+    /// retained reading, not against the latest event of any kind.
+    func testADelayedLimitsPayloadStillReplacesAnOlderRetainedReading() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let connector = ClaudeCodeConnector(
+            projectsURL: root,
+            planUsageHistoryURL: root.appending(path: "missing.json"),
+            now: { Date(timeIntervalSince1970: 5_000) }
+        )
+
+        try await connector.ingest(ClaudeCodeStatusEvent(
+            sessionID: "s-1", fiveHour: .init(usedPercentage: 10, resetsAt: 9_000), sevenDay: nil, sentAt: 1_000_000
+        ))
+        try await connector.ingest(ClaudeCodeStatusEvent(
+            sessionID: "s-1", fiveHour: nil, sevenDay: nil, sentAt: 3_000_000
+        ))
+        try await connector.ingest(ClaudeCodeStatusEvent(
+            sessionID: "s-1", fiveHour: .init(usedPercentage: 44, resetsAt: 9_000), sevenDay: nil, sentAt: 2_000_000
+        ))
+        let snapshot = try await connector.snapshot()
+
+        XCTAssertEqual(
+            snapshot.usageWindows.first { $0.id == "claude-5h" }?.usedFraction ?? 0, 0.44, accuracy: 0.0001,
+            "the delayed reading is newer than the one held, so it wins"
+        )
+    }
+
     func testAccountUsageSuppliesResetWhileJournalKeepsTheFresherPercent() async throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
