@@ -65,6 +65,39 @@ final class CodexConnectorTests: XCTestCase {
         XCTAssertEqual(sevenDays.resetsAt, Date(timeIntervalSince1970: 9_600), "and its own reset travels with it")
     }
 
+    /// Severity decides between quota families, so a family that stops being
+    /// reported could hold the bar at its last high reading until that
+    /// reading's own reset passed — the better part of a week, for a weekly
+    /// window, at a figure nobody is accruing any more. A reading has to be
+    /// recent enough to speak for the window it describes.
+    func testADormantFamilyStopsOutrankingTheLiveOne() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let rollout = root.appending(path: "2026/09/11/rollout-dormant.jsonl")
+        try FileManager.default.createDirectory(at: rollout.deletingLastPathComponent(), withIntermediateDirectories: true)
+
+        // now = 500_000s. The weekly window is 604_800s, so a reading older
+        // than a quarter of it (151_200s) no longer speaks for it.
+        // `dormant` last reported at t=200_000 (300_000s ago) at 95%; its reset
+        // is still in the future, so only recency can retire it.
+        let contents = """
+        {"timestamp":"1970-01-01T00:00:10.000Z","type":"session_meta","payload":{"id":"codex-1","cwd":"/tmp/AgentHearth","source":"cli","model_provider":"openai"}}
+        {"timestamp":"1970-01-03T07:33:20.000Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":1,"cached_input_tokens":1}},"rate_limits":{"limit_id":"dormant","primary":{"used_percent":95,"window_minutes":10080,"resets_at":900000}}}}
+        {"timestamp":"1970-01-06T18:53:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":1,"cached_input_tokens":1}},"rate_limits":{"limit_id":"codex","primary":{"used_percent":20,"window_minutes":10080,"resets_at":900000}}}}
+        """
+        try Data(contents.utf8).write(to: rollout)
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 499_000)], ofItemAtPath: rollout.path)
+
+        let connector = CodexConnector(sessionsURL: root, now: { Date(timeIntervalSince1970: 500_000) })
+        let snapshot = try await connector.snapshot()
+
+        let sevenDays = try XCTUnwrap(snapshot.usageWindows.first { $0.label == "7 days" })
+        XCTAssertEqual(
+            sevenDays.usedFraction, 0.20, accuracy: 0.0001,
+            "the live family's current reading, not the dormant family's stale 95%"
+        )
+    }
+
     func testReadsWorkingSessionCacheAndQuotaFromRollout() async throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }

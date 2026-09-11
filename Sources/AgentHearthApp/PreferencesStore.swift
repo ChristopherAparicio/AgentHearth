@@ -9,34 +9,8 @@ import Foundation
 final class PreferencesStore {
     private let defaults: UserDefaults
 
-    /// The domain earlier releases wrote to. `UserDefaults.standard` is named
-    /// after the bundle identifier, so renaming the app's identifier moved
-    /// every preference out from under it — silently, back to defaults.
-    static let legacyDomain = "com.guardix.agenthearth"
-
     init(defaults: UserDefaults) {
         self.defaults = defaults
-        adoptLegacyDomainIfEmpty()
-    }
-
-    /// Copies preferences over from the pre-rename domain, once, and only when
-    /// the current one is untouched. Guarded on emptiness rather than on a flag
-    /// so it can never overwrite something the user has since set.
-    ///
-    /// `NS`-prefixed keys are left behind deliberately: window frames and
-    /// status-item visibility are AppKit's record of a particular app identity,
-    /// and carrying a stale status-item visibility across a rename is how an
-    /// app arrives already hidden.
-    private func adoptLegacyDomainIfEmpty() {
-        guard let identifier = Bundle.main.bundleIdentifier,
-              identifier != Self.legacyDomain,
-              defaults.persistentDomain(forName: identifier)?.isEmpty ?? true,
-              let legacy = defaults.persistentDomain(forName: Self.legacyDomain),
-              !legacy.isEmpty
-        else { return }
-        for (key, value) in legacy where !key.hasPrefix("NS") {
-            defaults.set(value, forKey: key)
-        }
     }
 
     var notificationPolicy: NotificationPolicy {
