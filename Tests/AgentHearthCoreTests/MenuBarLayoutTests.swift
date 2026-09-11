@@ -19,6 +19,28 @@ final class MenuBarLayoutTests: XCTestCase {
         XCTAssertFalse(layout.effectiveShowsFlame)
     }
 
+    /// The layout-level flame guard reasons about the *configured* items, so a
+    /// non-empty layout switches it off — yet those items can still render to
+    /// nothing, leaving the status item with no content at all. An empty status
+    /// item has zero width, and macOS removes a zero-width item, which for a
+    /// MenuBarExtra app terminates the process. Whoever draws the label must
+    /// therefore fall back to the flame on the rendered items, not this flag.
+    func testANonEmptyLayoutCanStillRenderNothing() {
+        let layout = MenuBarLayout(showsFlame: false, items: [
+            MenuBarItem(metric: .sessionCount(.working), scope: .provider(.openCode), hidesWhenZero: true),
+        ])
+        XCTAssertFalse(layout.effectiveShowsFlame, "the layout believes its items will draw something")
+
+        // OpenCode has no working session, and the item hides at zero.
+        let rendered = MenuBarLayoutRenderer.render(layout, snapshots: snapshots, cacheWarningSeconds: 60)
+        XCTAssertTrue(rendered.isEmpty, "so nothing is left to draw, and the flag cannot know")
+
+        // The same layout with no snapshots at all -- the state at launch,
+        // before the first poll returns.
+        let atLaunch = MenuBarLayoutRenderer.render(layout, snapshots: [], cacheWarningSeconds: 60)
+        XCTAssertTrue(atLaunch.isEmpty)
+    }
+
     func testSessionCountsHonorScopeAndFilter() {
         let layout = MenuBarLayout(items: [
             MenuBarItem(metric: .sessionCount(.all)),
