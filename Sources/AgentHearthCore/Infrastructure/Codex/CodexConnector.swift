@@ -411,9 +411,17 @@ public actor CodexConnector: ProviderConnector {
         }
 
         // Between families, the most constraining current reading is the one
-        // actually limiting the user.
+        // actually limiting the user — but only among readings still worth
+        // believing. A family that stops being reported keeps its last reading
+        // until that reading's own reset passes, which for a weekly window is
+        // the better part of a week; severity would then let a dormant family
+        // hold the bar at a figure nobody is accruing any more.
+        //
+        // What counts as too old scales with the window being described: an
+        // hour-old reading says little about a five-hour window and plenty
+        // about a seven-day one. A quarter of the window is the line.
         var byWindow: [String: UsageWindow] = [:]
-        for window in currentPerFamily.values {
+        for window in currentPerFamily.values where isRecentEnough(window, at: currentTime) {
             guard let existing = byWindow[window.id] else {
                 byWindow[window.id] = window
                 continue
@@ -423,6 +431,18 @@ public actor CodexConnector: ProviderConnector {
             }
         }
         return byWindow.values.sorted { $0.id < $1.id }
+    }
+
+    /// Whether a reading is recent enough to speak for the window it
+    /// describes. Windows are named `codex-<minutes>`, which is the only place
+    /// the period survives into the rendered value; a window whose period
+    /// cannot be read from its id is left alone rather than guessed at.
+    private func isRecentEnough(_ window: UsageWindow, at currentTime: Date) -> Bool {
+        guard let minutes = window.id.split(separator: "-").last.flatMap({ Int($0) }), minutes > 0 else {
+            return true
+        }
+        let allowance = TimeInterval(minutes) * 60 / 4
+        return window.measuredAt >= currentTime.addingTimeInterval(-allowance)
     }
 
     /// Identifies one quota window within one family.
