@@ -55,13 +55,26 @@ struct MenuBarStatusLabel: View {
         items.contains { $0.tint != .automatic || $0.providerSymbol != nil }
     }
 
+    /// The flame is the fallback whenever nothing else would draw.
+    ///
+    /// An empty status item has zero width, and macOS removes a zero-width
+    /// item — which for a `MenuBarExtra` app means terminating the process.
+    /// `MenuBarLayout.effectiveShowsFlame` already guards this, but it reasons
+    /// about the *configured* items while what gets drawn here are the
+    /// *rendered* ones. A layout that is not empty can still render to nothing:
+    /// at launch before any snapshot has arrived, or once an item set to hide
+    /// at zero reaches zero. The guarantee has to be made where the drawing
+    /// happens, against the values actually in hand.
+    private var drawsFlame: Bool {
+        showsFlame || items.isEmpty
+    }
+
     var body: some View {
         if needsRasterization, let image = rasterized() {
             Image(nsImage: image)
         } else {
-            // `effectiveShowsFlame` guarantees this never renders empty.
             HStack(spacing: 4) {
-                if showsFlame {
+                if drawsFlame {
                     Image(systemName: "flame.fill")
                 }
                 if !items.isEmpty {
