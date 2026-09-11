@@ -16,10 +16,25 @@ public enum ClaudeCredentialStoreRead: Sendable {
 /// The credential-store surface ``ClaudeAccountUsageFetcher`` needs, behind a
 /// protocol so the classification it drives can be exercised without a real
 /// Keychain — and therefore without the consent dialog that reading one raises.
+/// One credential store, named and dated. The date comes from the item's
+/// attributes, which are readable without consent — so it can be used to
+/// decide whether opening the store is worth a dialog.
+public struct ClaudeCredentialStoreRef: Sendable, Equatable {
+    public let service: String
+    /// When the store was last written, or nil when that cannot be
+    /// established — in which case it is never treated as too old to matter.
+    public let modifiedAt: Date?
+
+    public init(service: String, modifiedAt: Date?) {
+        self.service = service
+        self.modifiedAt = modifiedAt
+    }
+}
+
 public protocol ClaudeCredentialStoreReading: Sendable {
     /// Every store holding Claude Code credentials, most recently written
     /// first. Reading attributes never prompts, so the ordering is free.
-    func services() -> [String]
+    func services() -> [ClaudeCredentialStoreRef]
     func read(service: String) -> ClaudeCredentialStoreRead
     /// Claude Code's fallback store, used when the Keychain is unavailable.
     func fallbackStore() -> Data?
@@ -51,8 +66,8 @@ public struct KeychainClaudeCredentialStore: ClaudeCredentialStoreReading {
         self.fallbackURL = fallbackURL
     }
 
-    public func services() -> [String] {
-        candidates().map(\.service)
+    public func services() -> [ClaudeCredentialStoreRef] {
+        candidates().map { ClaudeCredentialStoreRef(service: $0.service, modifiedAt: $0.modifiedAt) }
     }
 
     public func stateToken() -> String {
@@ -85,7 +100,9 @@ public struct KeychainClaudeCredentialStore: ClaudeCredentialStoreReading {
                 guard let service = item[kSecAttrService as String] as? String,
                       service.hasPrefix(servicePrefix)
                 else { return nil }
-                return (service, item[kSecAttrModificationDate as String] as? Date ?? .distantPast)
+                // An unknown date must never make a store look too old to
+                // open, so it sorts first and is treated as brand new.
+                return (service, item[kSecAttrModificationDate as String] as? Date ?? .distantFuture)
             }
             .sorted { $0.modifiedAt > $1.modifiedAt }
     }
@@ -120,6 +137,14 @@ public struct KeychainClaudeCredentialStore: ClaudeCredentialStoreReading {
 /// skips the call whenever no usable token can be read, reporting *why* so the
 /// caller can name the one gesture that fixes it.
 public struct ClaudeAccountUsageFetcher: Sendable {
+    /// How long after its last write a credential store is still worth
+    /// opening. Claude Code's access tokens last hours and the refresh tokens
+    /// behind them about a week, so a store untouched for longer holds nothing
+    /// still alive. Generous on purpose: being too strict would send someone
+    /// to a sign-in they did not need, while being too eager costs a Keychain
+    /// dialog for every stale profile left on the machine.
+    static let maximumUsefulAge: TimeInterval = 8 * 24 * 60 * 60
+
     private static let endpoint = URL(string: "https://api.anthropic.com/api/oauth/usage")!
     private static let betaHeader = "oauth-2025-04-20"
 
@@ -285,8 +310,18 @@ public struct ClaudeAccountUsageFetcher: Sendable {
         var opened: [Data] = []
         var wasDenied = false
 
-        for service in stores.services() {
-            switch stores.read(service: service) {
+        for store in stores.services() {
+            // Opening a store costs the user a consent dialog, so don't open
+            // one that cannot possibly help. Claude Code rewrites its item on
+            // every token refresh, so the write date bounds what the item can
+            // hold: past the refresh token's own lifetime, neither the access
+            // token nor the refresh behind it is still alive. Skipping those
+            // is the difference between one dialog and one per stale profile.
+            if let modifiedAt = store.modifiedAt,
+               modifiedAt < current.addingTimeInterval(-Self.maximumUsefulAge) {
+                continue
+            }
+            switch stores.read(service: store.service) {
             case let .data(data):
                 opened.append(data)
                 // The newest store with a still-valid token is the answer;
