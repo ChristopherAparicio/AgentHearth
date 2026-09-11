@@ -36,8 +36,8 @@ final class StubURLProtocol: URLProtocol {
 /// Stands in for the Keychain so the credential classification can be driven
 /// from fixed stores, in the order a real sweep would see them.
 private final class StubCredentialStore: ClaudeCredentialStoreReading, @unchecked Sendable {
-    /// Service name to what opening it yields, newest store first.
-    var items: [(service: String, read: ClaudeCredentialStoreRead)] = []
+    /// Service name, age, and what opening it yields — newest store first.
+    var items: [(service: String, age: TimeInterval, read: ClaudeCredentialStoreRead)] = []
     var fallback: Data?
     /// Bumped by a test to simulate Claude Code writing a new token.
     var generation = 0
@@ -45,12 +45,17 @@ private final class StubCredentialStore: ClaudeCredentialStoreReading, @unchecke
     /// user a consent dialog.
     private(set) var openCount = 0
 
-    init(items: [(service: String, read: ClaudeCredentialStoreRead)] = [], fallback: Data? = nil) {
+    /// The clock the fetcher under test uses, so ages are relative to it.
+    let now = Date(timeIntervalSince1970: 10_000)
+
+    init(items: [(service: String, age: TimeInterval, read: ClaudeCredentialStoreRead)] = [], fallback: Data? = nil) {
         self.items = items
         self.fallback = fallback
     }
 
-    func services() -> [String] { items.map(\.service) }
+    func services() -> [ClaudeCredentialStoreRef] {
+        items.map { ClaudeCredentialStoreRef(service: $0.service, modifiedAt: now.addingTimeInterval(-$0.age)) }
+    }
 
     func read(service: String) -> ClaudeCredentialStoreRead {
         openCount += 1
@@ -183,8 +188,8 @@ final class ClaudeAccountUsageFetcherTests: XCTestCase {
     /// possibly help.
     func testHuskOverLapsedStoresReportsSignedOut() async {
         let outcome = await makeFetcher(stores: StubCredentialStore(items: [
-            ("Claude Code-credentials", .data(Self.husk)),
-            ("Claude Code-credentials-00000000000002", .data(Self.lapsedBeyondRefresh)),
+            ("Claude Code-credentials", 0, .data(Self.husk)),
+            ("Claude Code-credentials-00000000000002", 0, .data(Self.lapsedBeyondRefresh)),
         ])).fetch()
 
         guard case .signedOut = outcome else { return XCTFail("expected signedOut, got \(outcome)") }
@@ -194,7 +199,7 @@ final class ClaudeAccountUsageFetcherTests: XCTestCase {
     /// CLI can recover on its own, so this must not ask for a new sign-in.
     func testLapsedTokenWithLiveRefreshReportsExpired() async {
         let outcome = await makeFetcher(stores: StubCredentialStore(items: [
-            ("Claude Code-credentials", .data(Self.lapsedButRefreshable)),
+            ("Claude Code-credentials", 0, .data(Self.lapsedButRefreshable)),
         ])).fetch()
 
         guard case .tokenExpired = outcome else { return XCTFail("expected tokenExpired, got \(outcome)") }
@@ -204,7 +209,7 @@ final class ClaudeAccountUsageFetcherTests: XCTestCase {
     /// very possibly fine and only the Keychain dialog needs answering.
     func testRefusedKeychainReadIsNotMistakenForBeingSignedOut() async {
         let outcome = await makeFetcher(stores: StubCredentialStore(items: [
-            ("Claude Code-credentials", .denied),
+            ("Claude Code-credentials", 0, .denied),
         ])).fetch()
 
         guard case .keychainAccessDenied = outcome else {
@@ -217,8 +222,8 @@ final class ClaudeAccountUsageFetcherTests: XCTestCase {
     func testLiveTokenBehindAHuskStillFetchesUsage() async {
         StubURLProtocol.body = Data(#"{"five_hour":{"utilization":26,"resets_at":"2026-08-24T18:00:00Z"}}"#.utf8)
         let outcome = await makeFetcher(stores: StubCredentialStore(items: [
-            ("Claude Code-credentials", .data(Self.husk)),
-            ("Claude Code-credentials-00000000000002", .data(Self.live)),
+            ("Claude Code-credentials", 0, .data(Self.husk)),
+            ("Claude Code-credentials-00000000000002", 0, .data(Self.live)),
         ])).fetch()
 
         guard case let .usage(usage) = outcome else { return XCTFail("expected usage, got \(outcome)") }
@@ -232,14 +237,46 @@ final class ClaudeAccountUsageFetcherTests: XCTestCase {
         guard case .signedOut = outcome else { return XCTFail("expected signedOut, got \(outcome)") }
     }
 
+    /// Every store opened is a consent dialog for the user. A profile last
+    /// written long enough ago cannot hold a live token — Claude Code rewrites
+    /// its item on each refresh — so opening it asks for a password to learn
+    /// nothing. Only the stores that could still help are opened.
+    func testStoresTooOldToHelpAreNeverOpened() async {
+        let day: TimeInterval = 24 * 60 * 60
+        let store = StubCredentialStore(items: [
+            ("Claude Code-credentials", 0, .data(Self.live)),
+            ("Claude Code-credentials-00000000000002", 9 * day, .data(Self.live)),
+            ("Claude Code-credentials-00000000000001", 40 * day, .data(Self.live)),
+        ])
+        StubURLProtocol.body = Data(#"{"five_hour":{"utilization":26,"resets_at":"2026-08-24T18:00:00Z"}}"#.utf8)
+
+        guard case .usage = await makeFetcher(stores: store).fetch() else { return XCTFail("expected usage") }
+        XCTAssertEqual(store.openCount, 1, "the newest store answered; the stale profiles were never touched")
+    }
+
+    /// The same rule must not silence a store that is merely second in line:
+    /// age decides, not position.
+    func testAStaleNewestStoreStillYieldsToARecentOlderOne() async {
+        let day: TimeInterval = 24 * 60 * 60
+        let store = StubCredentialStore(items: [
+            ("Claude Code-credentials", 0, .data(Self.husk)),
+            ("Claude Code-credentials-00000000000002", 2 * day, .data(Self.live)),
+            ("Claude Code-credentials-00000000000001", 40 * day, .data(Self.live)),
+        ])
+        StubURLProtocol.body = Data(#"{"five_hour":{"utilization":26,"resets_at":"2026-08-24T18:00:00Z"}}"#.utf8)
+
+        guard case .usage = await makeFetcher(stores: store).fetch() else { return XCTFail("expected usage") }
+        XCTAssertEqual(store.openCount, 2, "the husk, then the recent profile — the ancient one stays shut")
+    }
+
     /// A fruitless sweep opens every credential item, and each of those reads
     /// can raise a consent dialog. Repeating it on the next poll asked the user
     /// for a password again to reach the identical conclusion, several times an
     /// hour. The verdict is now held until the stores themselves differ.
     func testAFruitlessSweepIsNotRepeatedWhileTheStoresAreUnchanged() async {
         let store = StubCredentialStore(items: [
-            ("Claude Code-credentials", .data(Self.husk)),
-            ("Claude Code-credentials-00000000000002", .data(Self.lapsedBeyondRefresh)),
+            ("Claude Code-credentials", 0, .data(Self.husk)),
+            ("Claude Code-credentials-00000000000002", 0, .data(Self.lapsedBeyondRefresh)),
         ])
         let fetcher = makeFetcher(stores: store)
 
@@ -261,7 +298,7 @@ final class ClaudeAccountUsageFetcherTests: XCTestCase {
     /// pressing it has usually just changed their mind about a dialog, which
     /// no fingerprint of the stores can detect.
     func testAnExplicitRetryReopensTheStores() async {
-        let store = StubCredentialStore(items: [("Claude Code-credentials", .denied)])
+        let store = StubCredentialStore(items: [("Claude Code-credentials", 0, .denied)])
         let fetcher = makeFetcher(stores: store)
 
         guard case .keychainAccessDenied = await fetcher.fetch() else { return XCTFail("expected denied") }
