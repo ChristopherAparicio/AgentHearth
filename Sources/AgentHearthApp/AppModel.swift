@@ -231,6 +231,14 @@ final class AppModel {
             Task { await refreshConsumption() }
         }
     }
+    /// A range brushed on a consumption chart, overriding the range buttons.
+    /// Not persisted: a zoom is a question you ask once, not a setting.
+    var consumptionSelection: ClosedRange<Date>? {
+        didSet {
+            guard consumptionSelection != oldValue else { return }
+            Task { await refreshConsumption() }
+        }
+    }
     var consumptionProviderFilter: AgentProviderID?
     /// On-disk size of the history database, refreshed on every poll. Cheap
     /// (three `stat` calls), unlike the dashboard aggregation.

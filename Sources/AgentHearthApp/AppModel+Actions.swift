@@ -177,13 +177,14 @@ extension AppModel {
     }
 
     func consumptionStart(now: Date = .now) -> Date {
-        now.addingTimeInterval(-TimeInterval(max(1, consumptionRangeMinutes) * 60))
+        consumptionSelection?.lowerBound
+            ?? now.addingTimeInterval(-TimeInterval(max(1, consumptionRangeMinutes) * 60))
     }
 
     func refreshConsumption() async {
         consumption = await historyStore.consumption(
             startsAt: consumptionStart(),
-            endsAt: .now,
+            endsAt: consumptionSelection?.upperBound ?? .now,
             providerID: consumptionProviderFilter,
             cacheHitThreshold: Double(cacheHitThreshold) / 100
         )
