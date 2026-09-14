@@ -16,5 +16,7 @@ func settingsControlRow<Control: View>(
             .frame(width: 210, alignment: .trailing)
     }
     .frame(maxWidth: .infinity)
-    .padding(.vertical, 1)
+    // One point of padding reads as rows touching each other; four is enough
+    // to separate them without turning a dense settings pane into a scroll.
+    .padding(.vertical, 4)
 }

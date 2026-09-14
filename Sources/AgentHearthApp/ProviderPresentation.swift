@@ -243,3 +243,25 @@ extension AccountUsageRemedy {
         }
     }
 }
+
+/// Labels for the Cache Insights period, in one place so the compact picker
+/// and the Settings menu cannot drift apart.
+enum HistoryPeriod {
+    static func label(_ minutes: Int) -> String {
+        switch minutes {
+        case 60: "1 h"
+        case 1_440: "1 j"
+        case 10_080: "7 j"
+        default: "30 j"
+        }
+    }
+
+    static func longLabel(_ minutes: Int) -> String {
+        switch minutes {
+        case 60: "1 hour"
+        case 1_440: "24 hours"
+        case 10_080: "7 days"
+        default: "30 days"
+        }
+    }
+}
