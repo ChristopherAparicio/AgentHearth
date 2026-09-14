@@ -205,11 +205,19 @@ public actor SystemSSHCommandRunner: SSHCommandRunning {
         )
     }
 
-    /// Reads a handle to EOF on a background queue so the blocking read never
-    /// parks a Swift-concurrency cooperative thread.
+    /// Reads a handle to EOF on a thread of its own so the blocking read parks
+    /// neither a Swift-concurrency cooperative thread nor a shared dispatch one.
+    ///
+    /// The dedicated thread is the point. Parked on `DispatchQueue.global`,
+    /// two of these hold pool threads until EOF — and the watchdog that
+    /// delivers EOF, by killing a child that has outstayed its timeout, is
+    /// itself an `asyncAfter` on that same pool. With no thread to spare the
+    /// timer never runs, the child is never killed, the reads never end: the
+    /// drain parks on the pool it depends on to rescue it. Rare when one
+    /// command runs alone, reliable under a loaded test suite.
     private static func readToEnd(_ handle: FileHandle) async -> Data {
         await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .utility).async {
+            Thread.detachNewThread {
                 let data = (try? handle.readToEnd()) ?? Data()
                 continuation.resume(returning: data)
             }
