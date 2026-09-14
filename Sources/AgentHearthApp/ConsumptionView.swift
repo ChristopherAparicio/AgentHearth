@@ -79,37 +79,29 @@ struct ConsumptionView: View {
 
                 Spacer(minLength: 20)
 
-                if let selection = model.consumptionSelection {
-                    Button {
-                        model.consumptionSelection = nil
-                    } label: {
-                        Label(
+                Picker("Range", selection: rangeSelection) {
+                    if let selection = model.consumptionSelection {
+                        // Labelled with the range it stands for, so the picker
+                        // says what is on screen instead of merely that it is
+                        // not one of the presets. Leaving it is picking another.
+                        Text(
                             "\(selection.lowerBound.formatted(date: .omitted, time: .shortened))–"
-                                + "\(selection.upperBound.formatted(date: .omitted, time: .shortened))",
-                            systemImage: "xmark.magnifyingglass"
-                        )
+                                + "\(selection.upperBound.formatted(date: .omitted, time: .shortened))"
+                        ).tag(Self.brushedRangeTag)
                     }
-                    .help("Drag across a chart to zoom; click to go back to the range buttons")
-                }
-
-                Picker("Range", selection: $model.consumptionRangeMinutes) {
-                    Text("15 min").tag(15)
                     Text("1 h").tag(60)
-                    Text("4 h").tag(240)
-                    Text("24 h").tag(1_440)
+                    Text("1 j").tag(1_440)
+                    Text("7 j").tag(10_080)
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .frame(width: 260)
+                .frame(width: model.consumptionSelection == nil ? 200 : 320)
+                .help("Drag across a chart to scope everything to that stretch")
             }
             .onChange(of: model.consumptionProviderFilter) {
                 Task { await model.refreshConsumption() }
             }
-            .onChange(of: model.consumptionRangeMinutes) {
-                // Otherwise a zoom would outrank the buttons and they would
-                // look broken.
-                model.consumptionSelection = nil
-            }
+
         }
     }
 
@@ -168,6 +160,34 @@ struct ConsumptionView: View {
         }
     }
 
+    /// Stands for a brushed range in the picker. Zero is safe: a real range is
+    /// always at least one minute.
+    private static let brushedRangeTag = 0
+
+    /// The picker reads the brush when there is one and the preset otherwise,
+    /// and picking a preset is what releases the brush — so the presets can
+    /// never look dead while a zoom outranks them.
+    private var rangeSelection: Binding<Int> {
+        Binding(
+            get: {
+                if model.consumptionSelection != nil { return Self.brushedRangeTag }
+                return [60, 1_440, 10_080].contains(model.consumptionRangeMinutes)
+                    ? model.consumptionRangeMinutes
+                    : 1_440
+            },
+            set: { picked in
+                guard picked != Self.brushedRangeTag else { return }
+                model.consumptionSelection = nil
+                model.consumptionRangeMinutes = picked
+            }
+        )
+    }
+
+    /// Live extent of the drag, in plot coordinates, so the selection is
+    /// visible while it is being made. Cleared on release; the committed range
+    /// lives on the model.
+    @State private var brush: (CGFloat, CGFloat)?
+
     private func chart(_ timeline: UsageTimeline) -> some View {
         Chart {
             ForEach(timeline.points) { point in
@@ -198,7 +218,38 @@ struct ConsumptionView: View {
                 AxisValueLabel(format: .dateTime.hour().minute())
             }
         }
-        .chartXSelection(range: $model.consumptionSelection)
+        // Commit on release, not while dragging. `chartXSelection(range:)`
+        // reports a live hover and clears it on mouse-up, which reads as a
+        // zoom that undoes itself — and refetches on every pixel on the way.
+        .chartOverlay { proxy in
+            GeometryReader { geometry in
+                Rectangle()
+                    .fill(.clear)
+                    .contentShape(Rectangle())
+                    .gesture(
+                        DragGesture(minimumDistance: 6)
+                            .onChanged { brush = ($0.startLocation.x, $0.location.x) }
+                            .onEnded { drag in
+                                brush = nil
+                                guard let plot = proxy.plotFrame else { return }
+                                let origin = geometry[plot].origin.x
+                                guard let a: Date = proxy.value(atX: drag.startLocation.x - origin),
+                                      let b: Date = proxy.value(atX: drag.location.x - origin),
+                                      abs(a.timeIntervalSince(b)) >= 60
+                                else { return }
+                                model.consumptionSelection = min(a, b) ... max(a, b)
+                            }
+                    )
+                    .overlay(alignment: .leading) {
+                        if let brush {
+                            Rectangle()
+                                .fill(.tint.opacity(0.18))
+                                .frame(width: abs(brush.1 - brush.0))
+                                .offset(x: min(brush.0, brush.1))
+                        }
+                    }
+            }
+        }
         .frame(height: 150)
     }
 
@@ -341,11 +392,14 @@ struct ConsumptionView: View {
     // MARK: - Formatting
 
     private var rangeLabel: String {
+        if let selection = model.consumptionSelection {
+            let minutes = Int(selection.upperBound.timeIntervalSince(selection.lowerBound) / 60)
+            return "over the \(CompactDuration(TimeInterval(max(1, minutes) * 60)).text) selected"
+        }
         switch model.consumptionRangeMinutes {
-        case 15: "in the last 15 minutes"
-        case 60: "in the last hour"
-        case 240: "in the last 4 hours"
-        default: "in the last 24 hours"
+        case 60: return "in the last hour"
+        case 10_080: return "in the last 7 days"
+        default: return "in the last 24 hours"
         }
     }
 

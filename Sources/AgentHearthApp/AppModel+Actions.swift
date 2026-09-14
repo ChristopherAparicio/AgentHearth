@@ -50,9 +50,21 @@ extension AppModel {
         sessionOpenPreferences.setDestination(destination, for: providerID)
     }
 
+    /// The periods Cache Insights offers, bounded by what is actually kept:
+    /// a window longer than the retention promises data the store has already
+    /// deleted.
+    var historyRangePeriods: [Int] {
+        [60, 1_440, 10_080, 43_200].filter { $0 <= historyRetention.rawValue * 24 * 60 }
+    }
+
+    func historyStart(now: Date = .now) -> Date {
+        now.addingTimeInterval(-TimeInterval(max(1, historyRangeMinutes) * 60))
+    }
+
     func refreshHistoryDashboard() async {
         historyDashboard = await historyStore.dashboard(
-            days: historyRangeDays,
+            startsAt: historyStart(),
+            endsAt: .now,
             providerID: historyProviderFilter,
             cacheHitThreshold: Double(cacheHitThreshold) / 100
         )

@@ -58,15 +58,14 @@ struct HistoryDashboardView: View {
 
                 Spacer(minLength: 20)
 
-                Picker("Period", selection: $model.historyRangeDays) {
-                    Text("24h").tag(1)
-                    Text("7d").tag(7)
-                    Text("30d").tag(30)
-                    Text("90d").tag(90)
+                Picker("Period", selection: $model.historyRangeMinutes) {
+                    ForEach(model.historyRangePeriods, id: \.self) { minutes in
+                        Text(HistoryPeriod.label(minutes)).tag(minutes)
+                    }
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .frame(width: 220)
+                .frame(width: CGFloat(model.historyRangePeriods.count) * 55)
             }
             .onChange(of: model.historyProviderFilter) {
                 Task { await model.refreshHistoryDashboard() }

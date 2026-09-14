@@ -179,9 +179,9 @@ final class AppModel {
             persistHistoryPreferences()
         }
     }
-    var historyRangeDays: Int {
+    var historyRangeMinutes: Int {
         didSet {
-            guard historyRangeDays != oldValue else { return }
+            guard historyRangeMinutes != oldValue else { return }
             persistHistoryPreferences()
         }
     }
@@ -330,7 +330,7 @@ final class AppModel {
         self.usageResetDisplay = preferences.usageResetDisplay
         self.historyEnabled = preferences.historyEnabled
         self.historyRetention = preferences.historyRetention
-        self.historyRangeDays = preferences.historyRangeDays
+        self.historyRangeMinutes = preferences.historyRangeMinutes
         self.historyProviderFilter = nil
         self.consumptionRangeMinutes = preferences.consumptionRangeMinutes
         self.consumptionProviderFilter = nil
@@ -560,7 +560,8 @@ final class AppModel {
             // History settings refresh themselves on appearance).
             if historyDashboardObservers > 0 {
                 historyDashboard = await historyStore.dashboard(
-                    days: historyRangeDays,
+                    startsAt: historyStart(),
+                    endsAt: .now,
                     providerID: historyProviderFilter,
                     cacheHitThreshold: Double(cacheHitThreshold) / 100
                 )
@@ -629,7 +630,7 @@ final class AppModel {
         }
         preferences.historyEnabled = historyEnabled
         preferences.historyRetention = historyRetention
-        preferences.historyRangeDays = historyRangeDays
+        preferences.historyRangeMinutes = historyRangeMinutes
         preferences.cacheHitThreshold = cacheHitThreshold
         preferences.morningRecapEnabled = morningRecapEnabled
         preferences.morningRecapStartHour = morningRecapStartHour

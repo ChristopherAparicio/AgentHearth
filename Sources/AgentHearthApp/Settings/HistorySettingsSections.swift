@@ -23,11 +23,10 @@ struct HistoryReportsSettingsSection: View {
             .disabled(!model.historyEnabled)
 
             settingsControlRow("Default dashboard period") {
-                Picker("Dashboard period", selection: $model.historyRangeDays) {
-                    Text("24 hours").tag(1)
-                    Text("7 days").tag(7)
-                    Text("30 days").tag(30)
-                    Text("90 days").tag(90)
+                Picker("Dashboard period", selection: $model.historyRangeMinutes) {
+                    ForEach(model.historyRangePeriods, id: \.self) { minutes in
+                        Text(HistoryPeriod.longLabel(minutes)).tag(minutes)
+                    }
                 }
                 .labelsHidden()
                 .pickerStyle(.menu)

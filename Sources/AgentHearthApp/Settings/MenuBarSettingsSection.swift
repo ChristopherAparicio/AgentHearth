@@ -190,6 +190,7 @@ private struct MenuBarItemEditor: View {
                         get: { text },
                         set: { item.prefix = .text(String($0.prefix(6))) }
                     ))
+                    .labelsHidden()
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 80)
                 }

@@ -293,6 +293,7 @@ private struct AddRemoteHostForm: View {
                             .font(.caption.weight(.medium))
                             .foregroundStyle(.secondary)
                         TextField("Example: RTX 5090", text: $name)
+                            .labelsHidden()
                             .textFieldStyle(.roundedBorder)
                     }
 
@@ -301,6 +302,7 @@ private struct AddRemoteHostForm: View {
                             .font(.caption.weight(.medium))
                             .foregroundStyle(.secondary)
                         TextField("Example: rtx-server or user@host", text: $sshDestination)
+                            .labelsHidden()
                             .font(.body.monospaced())
                             .textFieldStyle(.roundedBorder)
                     }
@@ -353,6 +355,7 @@ private struct AddOpenCodeServerForm: View {
                                 .font(.caption.weight(.medium))
                                 .foregroundStyle(.secondary)
                             TextField("Example: Main OpenCode", text: $name)
+                                .labelsHidden()
                                 .textFieldStyle(.roundedBorder)
                         }
 
@@ -379,6 +382,7 @@ private struct AddOpenCodeServerForm: View {
                                 .font(.caption.weight(.medium))
                                 .foregroundStyle(.secondary)
                             TextField("Example: 4096", text: $port)
+                                .labelsHidden()
                                 .font(.body.monospaced())
                                 .textFieldStyle(.roundedBorder)
                                 .frame(maxWidth: 180)
