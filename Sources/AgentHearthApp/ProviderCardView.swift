@@ -283,7 +283,10 @@ struct ProviderCardView: View {
     private func usageMeasuredNote(now: Date) -> some View {
         let windows = snapshot.usageWindows
         let lacksResets = windows.allSatisfy { $0.resetsAt == nil }
-        if let measuredAt = windows.map(\.measuredAt).max() {
+        // The oldest window, not the freshest: a card is misleading exactly
+        // when one row has stopped moving while another still updates, and
+        // taking the freshest hid the note in precisely that case.
+        if let measuredAt = windows.map(\.measuredAt).min() {
             let age = now.timeIntervalSince(measuredAt)
             // Without reset times the age is the only context there is, so show
             // it almost immediately; otherwise only once it is genuinely stale.
@@ -294,7 +297,8 @@ struct ProviderCardView: View {
                     .help(
                         lacksResets
                             ? "Reset times appear once a terminal session reports them"
-                            : "Usage refreshes when a session of this provider reports it"
+                            : "The oldest figure on this card. Usage refreshes only when a session "
+                                + "of this provider reports it, so an idle provider keeps its last reading"
                     )
             }
         }
