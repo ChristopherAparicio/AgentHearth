@@ -79,6 +79,19 @@ struct ConsumptionView: View {
 
                 Spacer(minLength: 20)
 
+                if let selection = model.consumptionSelection {
+                    Button {
+                        model.consumptionSelection = nil
+                    } label: {
+                        Label(
+                            "\(selection.lowerBound.formatted(date: .omitted, time: .shortened))–"
+                                + "\(selection.upperBound.formatted(date: .omitted, time: .shortened))",
+                            systemImage: "xmark.magnifyingglass"
+                        )
+                    }
+                    .help("Drag across a chart to zoom; click to go back to the range buttons")
+                }
+
                 Picker("Range", selection: $model.consumptionRangeMinutes) {
                     Text("15 min").tag(15)
                     Text("1 h").tag(60)
@@ -91,6 +104,11 @@ struct ConsumptionView: View {
             }
             .onChange(of: model.consumptionProviderFilter) {
                 Task { await model.refreshConsumption() }
+            }
+            .onChange(of: model.consumptionRangeMinutes) {
+                // Otherwise a zoom would outrank the buttons and they would
+                // look broken.
+                model.consumptionSelection = nil
             }
         }
     }
@@ -180,6 +198,7 @@ struct ConsumptionView: View {
                 AxisValueLabel(format: .dateTime.hour().minute())
             }
         }
+        .chartXSelection(range: $model.consumptionSelection)
         .frame(height: 150)
     }
 
