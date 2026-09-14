@@ -25,11 +25,17 @@ private final class ProcessWatchdog: @unchecked Sendable {
     private let lock = NSLock()
     private var fired = false
     private var finished = false
-    private var timer: DispatchWorkItem?
 
+    /// On a thread of its own, for the same reason the drain is: an
+    /// `asyncAfter` on the shared pool is delayed as long as the pool is
+    /// saturated, and this timer is the only thing that ends a command that has
+    /// outstayed its welcome. Parked there it could not fire, the child was
+    /// never killed, and the reads waiting on its exit never returned — the
+    /// timer starved exactly when the machine was busy enough to need it.
     init(process: Process, timeout: TimeInterval?) {
         guard let timeout, timeout > 0 else { return }
-        let item = DispatchWorkItem { [weak self, weak process] in
+        Thread.detachNewThread { [weak self, weak process] in
+            Thread.sleep(forTimeInterval: timeout)
             guard let self, let process else { return }
             lock.lock()
             let shouldTerminate = !finished && process.isRunning
@@ -37,8 +43,6 @@ private final class ProcessWatchdog: @unchecked Sendable {
             lock.unlock()
             if shouldTerminate { process.terminate() }
         }
-        timer = item
-        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + timeout, execute: item)
     }
 
     /// Cancels the pending timer and reports whether the watchdog killed the
@@ -51,7 +55,6 @@ private final class ProcessWatchdog: @unchecked Sendable {
         finished = true
         let killed = fired
         lock.unlock()
-        timer?.cancel()
         return killed
             && (process.terminationReason == .uncaughtSignal || process.terminationStatus == 255)
     }
