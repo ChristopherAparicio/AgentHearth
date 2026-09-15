@@ -89,9 +89,9 @@ struct ConsumptionView: View {
                                 + "\(selection.upperBound.formatted(date: .omitted, time: .shortened))"
                         ).tag(Self.brushedRangeTag)
                     }
-                    Text("1 h").tag(60)
-                    Text("1 j").tag(1_440)
-                    Text("7 j").tag(10_080)
+                    ForEach(PreferencesStore.consumptionRangePresets, id: \.self) { minutes in
+                        Text(HistoryPeriod.label(minutes)).tag(minutes)
+                    }
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
@@ -171,7 +171,8 @@ struct ConsumptionView: View {
         Binding(
             get: {
                 if model.consumptionSelection != nil { return Self.brushedRangeTag }
-                return [60, 1_440, 10_080].contains(model.consumptionRangeMinutes)
+                return PreferencesStore.consumptionRangePresets
+                    .contains(model.consumptionRangeMinutes)
                     ? model.consumptionRangeMinutes
                     : 1_440
             },

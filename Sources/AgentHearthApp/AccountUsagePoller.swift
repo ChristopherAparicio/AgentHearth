@@ -56,7 +56,9 @@ final class AccountUsagePoller {
     /// Set when the last fetch failed on credentials, naming what the user has
     /// to do. Nil while usage is flowing, and after a merely transient failure.
     private(set) var remedy: AccountUsageRemedy?
-    private var nextFetchAt: Date = .distantPast
+    /// When the next fetch becomes due. Readable so the backoff schedule can
+    /// be asserted on without waiting it out.
+    private(set) var nextFetchAt: Date = .distantPast
     /// True while a fetch is in flight. Without it, the opt-in's immediate
     /// fetch and the polling loop both pass the schedule check — the schedule
     /// is only rewritten once the fetch returns — and sweep the Keychain at

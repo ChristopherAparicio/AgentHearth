@@ -131,6 +131,27 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.guardix.agenthearth.core-tests
         GENERATE_INFOPLIST_FILE: YES
 
+  AgentHearthAppTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - Tests/AgentHearthAppTests
+      # Compiled into the bundle rather than loaded from the app: hosting the
+      # tests in AgentHearth would launch a menu-bar app — and its Keychain
+      # sweep — on every run.
+      - path: Sources/AgentHearthApp
+        excludes:
+          - AgentHearthApp.swift
+    dependencies:
+      - target: AgentHearthCore
+      - target: AgentHearthDomain
+      - target: AgentHearthApplication
+      - target: AgentHearthInfrastructure
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.guardix.agenthearth.app-tests
+        GENERATE_INFOPLIST_FILE: YES
+
 schemes:
   AgentHearth:
     build:
@@ -141,6 +162,8 @@ schemes:
         AgentHearthApplication: all
         AgentHearthInfrastructure: all
         AgentHearthCoreTests: [test]
+        AgentHearthAppTests: [test]
     test:
       targets:
         - AgentHearthCoreTests
+        - AgentHearthAppTests
