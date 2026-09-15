@@ -199,14 +199,6 @@ final class PreferencesStore {
         set { defaults.set(newValue.rawValue, forKey: PreferenceKey.historyRetentionDays) }
     }
 
-    var historyRangeDays: Int {
-        get {
-            let stored = defaults.integer(forKey: PreferenceKey.historyRangeDays)
-            return [1, 7, 30, 90].contains(stored) ? stored : 7
-        }
-        set { defaults.set(newValue, forKey: PreferenceKey.historyRangeDays) }
-    }
-
     /// Minutes rather than days: Cache Insights can now be scoped to an hour,
     /// which days cannot express. A separate key from the old day-based one so
     /// a stored 30 cannot be misread as thirty minutes; the old key is simply
@@ -216,13 +208,18 @@ final class PreferencesStore {
         set { defaults.set(newValue, forKey: PreferenceKey.historyRangeMinutes) }
     }
 
+    /// Ranges the consumption picker offers. The stored value is validated
+    /// against this very list, so a preset can never be written and then read
+    /// back as something else.
+    static let consumptionRangePresets = [60, 1_440, 10_080]
+
     /// Range of the consumption view, in minutes. Minutes rather than days
     /// because this view exists for the short horizons the cache dashboard
     /// cannot express — a burst lasts five minutes, not a day.
     var consumptionRangeMinutes: Int {
         get {
             let stored = defaults.integer(forKey: PreferenceKey.consumptionRangeMinutes)
-            return [15, 60, 240, 1_440].contains(stored) ? stored : 60
+            return Self.consumptionRangePresets.contains(stored) ? stored : 60
         }
         set { defaults.set(newValue, forKey: PreferenceKey.consumptionRangeMinutes) }
     }
@@ -356,7 +353,6 @@ private enum PreferenceKey {
     static let openCodeServers = "openCodeServers"
     static let historyEnabled = "historyEnabled"
     static let historyRetentionDays = "historyRetentionDays"
-    static let historyRangeDays = "historyRangeDays"
     static let historyRangeMinutes = "historyRangeMinutes"
     static let consumptionRangeMinutes = "consumptionRangeMinutes"
     static let cacheHitThreshold = "cacheHitThreshold"

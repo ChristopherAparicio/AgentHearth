@@ -65,7 +65,7 @@ struct MenuBarStatusLabel: View {
     /// at launch before any snapshot has arrived, or once an item set to hide
     /// at zero reaches zero. The guarantee has to be made where the drawing
     /// happens, against the values actually in hand.
-    private var drawsFlame: Bool {
+    var drawsFlame: Bool {
         showsFlame || items.isEmpty
     }
 

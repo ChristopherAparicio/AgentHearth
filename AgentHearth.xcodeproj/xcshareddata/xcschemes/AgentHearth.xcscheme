@@ -23,6 +23,20 @@
          </BuildActionEntry>
          <BuildActionEntry
             buildForTesting = "YES"
+            buildForRunning = "NO"
+            buildForProfiling = "NO"
+            buildForArchiving = "NO"
+            buildForAnalyzing = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "B328071702D59CB925EDE3BB"
+               BuildableName = "AgentHearthAppTests.xctest"
+               BlueprintName = "AgentHearthAppTests"
+               ReferencedContainer = "container:AgentHearth.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
             buildForRunning = "YES"
             buildForProfiling = "YES"
             buildForArchiving = "YES"
@@ -117,6 +131,17 @@
                BlueprintIdentifier = "7670E895069012F0F8A4FCB2"
                BuildableName = "AgentHearthCoreTests.xctest"
                BlueprintName = "AgentHearthCoreTests"
+               ReferencedContainer = "container:AgentHearth.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "B328071702D59CB925EDE3BB"
+               BuildableName = "AgentHearthAppTests.xctest"
+               BlueprintName = "AgentHearthAppTests"
                ReferencedContainer = "container:AgentHearth.xcodeproj">
             </BuildableReference>
          </TestableReference>
