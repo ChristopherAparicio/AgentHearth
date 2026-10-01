@@ -391,7 +391,7 @@ final class AppModel {
 
     static func live() -> AppModel {
         let openCodeConnector = OpenCodeConnector()
-        let codexConnector = CodexConnector()
+        let codexConnector = CodexConnector(accountUsage: CodexAccountUsageFetcher().fetch)
         let claudeCodeConnector = ClaudeCodeConnector()
         // Without the shared secret the loopback ingress would accept forged
         // provider events from any local process, so a provisioning failure

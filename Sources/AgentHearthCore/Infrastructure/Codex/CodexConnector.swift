@@ -21,6 +21,18 @@ public actor CodexConnector: ProviderConnector {
     private var summariesByPath: [String: CachedRolloutSummary] = [:]
     private(set) var rolloutDecodeCount = 0
 
+    /// Asks Codex's own service what the account's quota is, when wired.
+    /// Rollouts only carry whichever limit Codex happened to be spending at
+    /// the time, so they cannot be trusted alone — see
+    /// ``CodexAccountUsageFetcher``.
+    private let accountUsage: (@Sendable () async -> [UsageWindow]?)?
+    private let accountUsageTTL: TimeInterval
+    /// How long a last good reading keeps standing in for a fetch that has
+    /// started failing, before the rollouts take over again.
+    private let accountUsageMaxAge: TimeInterval
+    private var lastAccountFetchAt: Date?
+    private var accountWindows: (windows: [UsageWindow], fetchedAt: Date)?
+
     /// Where Codex writes its rollouts, mirroring `PlanUsageHistoryReader`'s
     /// named default so callers and tests can refer to the path by name.
     public static let defaultSessionsURL = FileManager.default.homeDirectoryForCurrentUser
@@ -32,8 +44,14 @@ public actor CodexConnector: ProviderConnector {
         hookFreshness: TimeInterval = 2 * 60 * 60,
         stuckAfter: TimeInterval = 15 * 60,
         now: @escaping @Sendable () -> Date = Date.init,
-        fileManager: FileManager = .default
+        fileManager: FileManager = .default,
+        accountUsage: (@Sendable () async -> [UsageWindow]?)? = nil,
+        accountUsageTTL: TimeInterval = 5 * 60,
+        accountUsageMaxAge: TimeInterval = 60 * 60
     ) {
+        self.accountUsage = accountUsage
+        self.accountUsageTTL = accountUsageTTL
+        self.accountUsageMaxAge = accountUsageMaxAge
         self.sessionsURL = sessionsURL
         self.relevantAge = relevantAge
         self.hookFreshness = hookFreshness
@@ -83,7 +101,7 @@ public actor CodexConnector: ProviderConnector {
             }
         }
         let sessions = sessionsByID.values.sortedWorkingFirst()
-        let usageWindows = bindingUsageWindows(parsed.flatMap(\.usage))
+        let usageWindows = await accountUsageWindows() ?? bindingUsageWindows(parsed.flatMap(\.usage))
         let hasRealtimeData = sourceMode.usesRealtimeData && !hookEventsBySession.isEmpty
         let connected = (sourceMode.usesLocalData && hasLocalStore) || hasRealtimeData
         let latestHookAt = hookEventsBySession.values
@@ -378,6 +396,31 @@ public actor CodexConnector: ProviderConnector {
         hookEventsBySession = hookEventsBySession.filter { $0.value.sentAt >= cutoff }
     }
 
+    /// The account endpoint's reading, refreshed at most once per TTL. The
+    /// attempt is stamped before awaiting, so two overlapping polls cannot
+    /// both go to the network. A failed fetch keeps the last good reading for
+    /// ``accountUsageMaxAge``, then hands the quota back to the rollouts
+    /// rather than showing a figure nobody can still vouch for.
+    private func accountUsageWindows() async -> [UsageWindow]? {
+        guard let accountUsage else { return nil }
+        let current = now()
+        if let lastAccountFetchAt, current.timeIntervalSince(lastAccountFetchAt) < accountUsageTTL {
+            return liveWindows(at: current)
+        }
+        lastAccountFetchAt = current
+        if let fetched = await accountUsage() {
+            accountWindows = (fetched, current)
+        }
+        return liveWindows(at: current)
+    }
+
+    private func liveWindows(at currentTime: Date) -> [UsageWindow]? {
+        guard let accountWindows,
+              currentTime.timeIntervalSince(accountWindows.fetchedAt) <= accountUsageMaxAge
+        else { return nil }
+        return accountWindows.windows
+    }
+
     /// Codex reports several quota families side by side (`limit_id`, e.g. an
     /// account migrated to a new plan bucket), each with its own windows. Taking
     /// only the newest event let a fresh 0% from one family hide another family
@@ -455,17 +498,9 @@ public actor CodexConnector: ProviderConnector {
         guard let rateLimits else { return nil }
         let windows = [rateLimits.primary, rateLimits.secondary].compactMap { window -> UsageWindow? in
             guard let window, let usedPercent = window.usedPercent else { return nil }
-            let minutes = window.windowMinutes ?? 0
-            let label: String
-            switch minutes {
-            case 300: label = "5 hours"
-            case 10_080: label = "7 days"
-            default: label = minutes > 0 ? "\(minutes) minutes" : "Usage"
-            }
-            return UsageWindow(
-                id: "codex-\(minutes)",
-                label: label,
-                usedFraction: usedPercent / 100,
+            return .codexQuota(
+                minutes: window.windowMinutes ?? 0,
+                usedPercent: usedPercent,
                 resetsAt: window.resetsAt.map { Date(timeIntervalSince1970: $0) },
                 measuredAt: measuredAt
             )

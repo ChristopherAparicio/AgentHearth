@@ -143,3 +143,30 @@ struct CodexRateLimitWindow: Decodable {
         case resetsAt = "resets_at"
     }
 }
+
+extension UsageWindow {
+    /// One Codex quota window, named identically whether it came from a
+    /// rollout file or from the account endpoint. The period is encoded in the
+    /// id because that is the only place it survives into the rendered value —
+    /// `CodexConnector.isRecentEnough` reads it back out.
+    static func codexQuota(
+        minutes: Int,
+        usedPercent: Double,
+        resetsAt: Date?,
+        measuredAt: Date
+    ) -> UsageWindow {
+        let label: String
+        switch minutes {
+        case 300: label = "5 hours"
+        case 10_080: label = "7 days"
+        default: label = minutes > 0 ? "\(minutes) minutes" : "Usage"
+        }
+        return UsageWindow(
+            id: "codex-\(minutes)",
+            label: label,
+            usedFraction: usedPercent / 100,
+            resetsAt: resetsAt,
+            measuredAt: measuredAt
+        )
+    }
+}
