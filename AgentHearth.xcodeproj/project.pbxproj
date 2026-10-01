@@ -82,6 +82,7 @@
 		5E1C769E648AC95E8E2EA2A1 /* AgentHearthCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 094B506B1E08DEC389EB2448 /* AgentHearthCore.framework */; };
 		5F7C33B3F1066408F79C59CC /* CacheTTLPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13DB39323EBA09293485B26E /* CacheTTLPolicyTests.swift */; };
 		60C15AE79901935642A74029 /* MenuBarRootView+SmartSleep.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF221AB579925A0FE4C1A511 /* MenuBarRootView+SmartSleep.swift */; };
+		6174ED0B856F31C23E4DA526 /* CodexAccountUsageFetcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C39D64314648F2620543D1B /* CodexAccountUsageFetcher.swift */; };
 		61B215A6146F836CB9A91E16 /* MacNotificationCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 745FE92E26F083E5118E3873 /* MacNotificationCenter.swift */; };
 		62DAA39880E1D963AC477216 /* CacheTTLPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5084B43CAAF00661995DE3C6 /* CacheTTLPolicy.swift */; };
 		639553EACEF31391B64A0C61 /* AgentHearthDomain.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 808ED2C77FE6A0139C3E34C1 /* AgentHearthDomain.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
@@ -101,6 +102,7 @@
 		7055D1A279C16DEA91B54977 /* AdaptivePollingPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20982C2B74CFBC09FFFEB93 /* AdaptivePollingPolicy.swift */; };
 		70847FCB20DB161DF5F03C59 /* AgentHearthInfrastructure.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 47A596AFEF42904DB55AD2FB /* AgentHearthInfrastructure.framework */; };
 		7235CD0CF0F3F92011D5BA55 /* OneShotTimer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A72C50BFFC2B3A183E65849E /* OneShotTimer.swift */; };
+		756A03ADFAEB78031418F5F3 /* CodexAccountUsageFetcherTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9A52292DF9BA235A3AB3015 /* CodexAccountUsageFetcherTests.swift */; };
 		76DD23CABCB8A88BC3167D39 /* ConnectorInstallationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00729F22D7F21BCB5CDCD3C5 /* ConnectorInstallationService.swift */; };
 		771EDCCE8BC2EA895C04F869 /* OneShotTimer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A72C50BFFC2B3A183E65849E /* OneShotTimer.swift */; };
 		778C7D289E2A706069587318 /* ProviderPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1AE5B3412C9FBDD112DC3B8E /* ProviderPresentation.swift */; };
@@ -411,6 +413,7 @@
 		28617D40DE206AA7E6769927 /* AgentHearthLocalServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentHearthLocalServer.swift; sourceTree = "<group>"; };
 		2AA31ED4F52EE48E62CBDECE /* RemoteHostsService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteHostsService.swift; sourceTree = "<group>"; };
 		2BA84AA94508333AC11F3FD9 /* CacheNotificationRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CacheNotificationRules.swift; sourceTree = "<group>"; };
+		2C39D64314648F2620543D1B /* CodexAccountUsageFetcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexAccountUsageFetcher.swift; sourceTree = "<group>"; };
 		2C9D64E66A52B776C13FAF53 /* CacheEvidenceAccumulator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CacheEvidenceAccumulator.swift; sourceTree = "<group>"; };
 		2D9F1CBB867AE5DBE4CE818B /* Codex */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Codex; path = Integrations/Codex; sourceTree = SOURCE_ROOT; };
 		2F253C635E0F592932993AA3 /* CacheHealth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CacheHealth.swift; sourceTree = "<group>"; };
@@ -527,6 +530,7 @@
 		F78F650433BC858076D6A22E /* BoundedJSONLReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoundedJSONLReader.swift; sourceTree = "<group>"; };
 		F829025FDB860D1FE9F2B9BD /* ProviderMonitorRemoteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderMonitorRemoteTests.swift; sourceTree = "<group>"; };
 		F96AAA81B8FF3D67403AC9B3 /* AccountUsagePollerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountUsagePollerTests.swift; sourceTree = "<group>"; };
+		F9A52292DF9BA235A3AB3015 /* CodexAccountUsageFetcherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexAccountUsageFetcherTests.swift; sourceTree = "<group>"; };
 		FFAB1901A4DC30E0AB4B7FFF /* ClaudeTranscriptModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeTranscriptModels.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -745,6 +749,7 @@
 				50742515AABE37486DC87484 /* ClaudeAccountUsageTests.swift */,
 				D1007724AED971A707F964C8 /* ClaudeCodeConnectorInstallerTests.swift */,
 				DA85D1614A0165C2B4F0DF2F /* ClaudeCodeConnectorTests.swift */,
+				F9A52292DF9BA235A3AB3015 /* CodexAccountUsageFetcherTests.swift */,
 				347165407FE45F09C73A8334 /* CodexConnectorInstallerTests.swift */,
 				6A0870E85C01063DB6DDE247 /* CodexConnectorTests.swift */,
 				8F9D2D834D7C975CC7A1EB7B /* CompactDurationTests.swift */,
@@ -837,6 +842,7 @@
 		DDB066054D50444A419058DA /* Codex */ = {
 			isa = PBXGroup;
 			children = (
+				2C39D64314648F2620543D1B /* CodexAccountUsageFetcher.swift */,
 				DB0FCB51C7682856D0ADB6CD /* CodexConnector.swift */,
 				1E19FE11896C9689644D3F3A /* CodexConnectorInstaller.swift */,
 				78ADC452D8BB0BB457353E49 /* CodexHookModels.swift */,
@@ -1231,6 +1237,7 @@
 				3A3D5F5B19EDE53D5D6F0B6F /* ClaudeCodeConnectorInstaller.swift in Sources */,
 				6E4A88E862526EF4F81B922D /* ClaudeCodeHookModels.swift in Sources */,
 				CB6911D2767A53FA81046881 /* ClaudeTranscriptModels.swift in Sources */,
+				6174ED0B856F31C23E4DA526 /* CodexAccountUsageFetcher.swift in Sources */,
 				F372CFFF59FABFC033F8B1CB /* CodexConnector.swift in Sources */,
 				04FAFECD276AE1CB2A9F95C0 /* CodexConnectorInstaller.swift in Sources */,
 				FE1568ECBA7142684EDE4B92 /* CodexHookModels.swift in Sources */,
@@ -1271,6 +1278,7 @@
 				7E160D8D69392203E901E9D6 /* ClaudeAccountUsageTests.swift in Sources */,
 				DF836F32C4905CCB4B742CB3 /* ClaudeCodeConnectorInstallerTests.swift in Sources */,
 				D557FCFA946422FDF5C1E49D /* ClaudeCodeConnectorTests.swift in Sources */,
+				756A03ADFAEB78031418F5F3 /* CodexAccountUsageFetcherTests.swift in Sources */,
 				0859763D7296689F3253B6F5 /* CodexConnectorInstallerTests.swift in Sources */,
 				5C6DC769229AADA337D0E4F1 /* CodexConnectorTests.swift in Sources */,
 				9E6A27E879AD1EC275E23D84 /* CompactDurationTests.swift in Sources */,

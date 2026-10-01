@@ -262,9 +262,103 @@ final class CodexConnectorTests: XCTestCase {
         XCTAssertEqual(snapshot.sessions.first?.cache.cachedReadTokens, 2_000)
     }
 
+    /// The bug this guards: once the weekly quota is spent, Codex switches to
+    /// a reserve model and writes *its* window into the rollout under the same
+    /// `limit_id` — 0% used, a reset a week out. Newest-reading-wins then
+    /// replaces the exhausted 100% with a quota that looks freshly reset. The
+    /// account endpoint still knows better, so its reading wins outright.
+    func testAccountUsageOutranksTheReserveWindowLeftInTheRollout() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let rollout = root.appending(path: "2026/09/20/rollout-reserve.jsonl")
+        try FileManager.default.createDirectory(at: rollout.deletingLastPathComponent(), withIntermediateDirectories: true)
+
+        let contents = """
+        {"timestamp":"1970-01-01T00:16:00.000Z","type":"session_meta","payload":{"id":"codex-1","cwd":"/tmp/AgentHearth","source":"cli","model_provider":"openai"}}
+        {"timestamp":"1970-01-01T00:33:19.000Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":1200,"cached_input_tokens":1000}},"rate_limits":{"limit_id":"codex","primary":{"used_percent":0,"window_minutes":10080,"resets_at":600000}}}}
+        """
+        try Data(contents.utf8).write(to: rollout)
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 1_999)], ofItemAtPath: rollout.path)
+
+        let live = UsageWindow.codexQuota(
+            minutes: 10_080,
+            usedPercent: 100,
+            resetsAt: Date(timeIntervalSince1970: 300_000),
+            measuredAt: Date(timeIntervalSince1970: 2_000)
+        )
+        let connector = CodexConnector(
+            sessionsURL: root,
+            now: { Date(timeIntervalSince1970: 2_000) },
+            accountUsage: { [live] }
+        )
+        let snapshot = try await connector.snapshot()
+
+        let weekly = try XCTUnwrap(snapshot.usageWindows.first { $0.label == "7 days" })
+        XCTAssertEqual(weekly.usedFraction, 1.0, accuracy: 0.0001)
+        XCTAssertEqual(weekly.resetsAt, Date(timeIntervalSince1970: 300_000))
+    }
+
+    /// A fetch that starts failing must not pin the bar to a figure nobody can
+    /// still vouch for: past the max age, the rollouts take the quota back.
+    func testStaleAccountUsageFallsBackToTheRollout() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let rollout = root.appending(path: "2026/09/20/rollout-fallback.jsonl")
+        try FileManager.default.createDirectory(at: rollout.deletingLastPathComponent(), withIntermediateDirectories: true)
+
+        let contents = """
+        {"timestamp":"1970-01-01T00:16:00.000Z","type":"session_meta","payload":{"id":"codex-1","cwd":"/tmp/AgentHearth","source":"cli","model_provider":"openai"}}
+        {"timestamp":"1970-01-01T00:33:19.000Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":1200,"cached_input_tokens":1000}},"rate_limits":{"limit_id":"codex","primary":{"used_percent":40,"window_minutes":10080,"resets_at":600000}}}}
+        """
+        try Data(contents.utf8).write(to: rollout)
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 1_999)], ofItemAtPath: rollout.path)
+
+        let clock = MutableClock(Date(timeIntervalSince1970: 2_000))
+        let succeeds = MutableFlag(true)
+        let connector = CodexConnector(
+            sessionsURL: root,
+            now: { clock.value },
+            accountUsage: {
+                guard succeeds.value else { return nil }
+                return [UsageWindow.codexQuota(
+                    minutes: 10_080,
+                    usedPercent: 100,
+                    resetsAt: Date(timeIntervalSince1970: 300_000),
+                    measuredAt: clock.value
+                )]
+            },
+            accountUsageTTL: 60,
+            accountUsageMaxAge: 600
+        )
+
+        var windows = try await connector.snapshot().usageWindows
+        var weekly = try XCTUnwrap(windows.first { $0.label == "7 days" })
+        XCTAssertEqual(weekly.usedFraction, 1.0, accuracy: 0.0001)
+
+        // The endpoint goes away; past the max age the last good reading is
+        // dropped and the rollout's own figure stands again.
+        succeeds.value = false
+        clock.value = Date(timeIntervalSince1970: 3_000)
+        windows = try await connector.snapshot().usageWindows
+        weekly = try XCTUnwrap(windows.first { $0.label == "7 days" })
+        XCTAssertEqual(weekly.usedFraction, 0.4, accuracy: 0.0001)
+    }
+
     private func temporaryDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory.appending(path: "AgentHearth-Codex-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
     }
+}
+
+/// Minimal mutable boxes so a test can move the clock and break the endpoint
+/// between two polls of the same connector.
+private final class MutableClock: @unchecked Sendable {
+    var value: Date
+    init(_ value: Date) { self.value = value }
+}
+
+private final class MutableFlag: @unchecked Sendable {
+    var value: Bool
+    init(_ value: Bool) { self.value = value }
 }
