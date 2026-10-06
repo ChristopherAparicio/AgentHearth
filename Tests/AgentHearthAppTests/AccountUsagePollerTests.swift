@@ -163,7 +163,8 @@ final class AccountUsagePollerTests: XCTestCase {
     func testASuccessfulFetchIsRepolledJustAfterTheSoonestReset() async {
         let fetcher = FakeAccountUsageFetcher()
         let (poller, _) = makePoller(fetcher)
-        let reset = Date().addingTimeInterval(45 * 60)
+        // Between the 5 min floor and the 15 min ceiling, so the reset decides.
+        let reset = Date().addingTimeInterval(10 * 60)
         fetcher.outcome = .usage(usage(resetsAt: reset))
 
         await poller.refreshIfNeeded()
@@ -181,14 +182,14 @@ final class AccountUsagePollerTests: XCTestCase {
         XCTAssertEqual(poller.nextFetchAt.timeIntervalSinceNow, 5 * 60, accuracy: 2)
     }
 
-    func testADistantResetIsCappedAtTwoHours() async {
+    func testADistantResetIsCappedAtFifteenMinutes() async {
         let fetcher = FakeAccountUsageFetcher()
         let (poller, _) = makePoller(fetcher)
         fetcher.outcome = .usage(usage(resetsAt: Date().addingTimeInterval(4 * 24 * 60 * 60)))
 
         await poller.refreshIfNeeded()
 
-        XCTAssertEqual(poller.nextFetchAt.timeIntervalSinceNow, 2 * 60 * 60, accuracy: 2)
+        XCTAssertEqual(poller.nextFetchAt.timeIntervalSinceNow, 15 * 60, accuracy: 2)
     }
 
     func testAWindowWithNoResetYetIsRepolledAtTheFloor() async {
