@@ -140,8 +140,8 @@ final class AccountUsagePoller {
         }
     }
 
-    /// Polls Anthropic's account usage at most every two hours (sooner after a
-    /// failure), only when opted in. Success injects the authoritative windows —
+    /// Polls Anthropic's account usage at most every 15 minutes (sooner after
+    /// a failure), only when opted in. Success injects the authoritative windows —
     /// with reset timestamps — into the Claude connector.
     func refreshIfNeeded() async {
         guard isEnabled, !isFetching, Date() >= nextFetchAt else { return }
@@ -192,12 +192,17 @@ final class AccountUsagePoller {
         return now.addingTimeInterval(now < signInGraceUntil ? 30 : interval)
     }
 
-    /// Re-fetch shortly after the soonest window resets (the 5h can lapse
-    /// between two-hour polls), but never sooner than 5 min nor later than 2 h.
+    /// Re-fetch shortly after the soonest window resets, but never sooner than
+    /// 5 min nor later than 15. The ceiling is what keeps the percentages
+    /// current: working in the desktop app's Code tab writes nothing to the
+    /// local journal, so for that kind of use this endpoint is the only source
+    /// that moves at all, and a two-hour ceiling left the bars two hours
+    /// behind while usage climbed. The token is held in memory, so a tighter
+    /// ceiling costs one HTTP call, never a Keychain dialog.
     /// A window that already lapsed, or that Anthropic reports without a reset
     /// (a 5h window with no usage yet reports `resets_at: null`), is re-polled
     /// at the 5 min floor so the reset shows up as soon as the window is in use
-    /// instead of up to two hours later.
+    /// instead of a full polling interval later.
     private func nextFetchAfter(_ usage: AccountUsage) -> Date {
         let now = Date()
         let windows = [usage.fiveHour, usage.sevenDay].compactMap { $0 }
@@ -205,10 +210,10 @@ final class AccountUsagePoller {
         let hasLapsedOrUnknownReset = windows.contains { window in
             window.resetsAt.map { $0 <= now } ?? true
         }
-        let twoHours = now.addingTimeInterval(2 * 60 * 60)
+        let ceiling = now.addingTimeInterval(15 * 60)
         let candidate = hasLapsedOrUnknownReset
             ? now
-            : soonestReset.map { $0.addingTimeInterval(60) } ?? twoHours
-        return max(now.addingTimeInterval(5 * 60), min(twoHours, candidate))
+            : soonestReset.map { $0.addingTimeInterval(60) } ?? ceiling
+        return max(now.addingTimeInterval(5 * 60), min(ceiling, candidate))
     }
 }

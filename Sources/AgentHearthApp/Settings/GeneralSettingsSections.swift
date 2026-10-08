@@ -176,7 +176,7 @@ struct ClaudeUsageSettingsSection: View {
                 }
             }
 
-            Text("Off by default. When on, AgentHearth reads your existing Claude sign-in from the Keychain to fetch the 5h/7d reset times from Anthropic about every two hours — the only source that works without an open terminal session. The token is read once per launch and kept in memory; it is never stored, refreshed, or sent anywhere but api.anthropic.com.")
+            Text("Off by default. When on, AgentHearth reads your existing Claude sign-in from the Keychain to fetch the 5h/7d reset times from Anthropic about every 15 minutes — the only source that works without an open terminal session. The token is read once per launch and kept in memory; it is never stored, refreshed, or sent anywhere but api.anthropic.com.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
