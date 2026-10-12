@@ -16,6 +16,7 @@
 		08267157C24CDBFB28FF8DDA /* ExpiringCacheView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AF1225C75A7DFA11B224B9C /* ExpiringCacheView.swift */; };
 		0859763D7296689F3253B6F5 /* CodexConnectorInstallerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 347165407FE45F09C73A8334 /* CodexConnectorInstallerTests.swift */; };
 		095BB3E52AFE65C75A7B9D6D /* NotificationSettingsSections.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D6D8CF1DEF531D1D432ACDE /* NotificationSettingsSections.swift */; };
+		0B46BCC617C3BFBC1E1CB737 /* ClaudeCLIAuthStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5B6D72C5BA35868968F0C25 /* ClaudeCLIAuthStatus.swift */; };
 		0B4AB5175F37F30F99C9C075 /* MenuBarRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A193BC3EBEF42BEAF127C319 /* MenuBarRootView.swift */; };
 		0C1F9FCA922EB65C6E6951C3 /* CacheActivityAggregate.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA43F9A1540956D4C634AEB9 /* CacheActivityAggregate.swift */; };
 		0CB48D0773C7DFB13E1FA8A8 /* SessionFocusService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0D8192D3D2AC3E75153FDCA /* SessionFocusService.swift */; };
@@ -502,6 +503,7 @@
 		BFE9E786D4D4FEECE26487A3 /* OpenCode */ = {isa = PBXFileReference; lastKnownFileType = folder; name = OpenCode; path = Integrations/OpenCode; sourceTree = SOURCE_ROOT; };
 		C24D42F1D3338FCEFFFE1874 /* SnapshotAlertDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapshotAlertDetector.swift; sourceTree = "<group>"; };
 		C4683DBAC89B498B519C31AE /* ConnectorSettingsSections.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectorSettingsSections.swift; sourceTree = "<group>"; };
+		C5B6D72C5BA35868968F0C25 /* ClaudeCLIAuthStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeCLIAuthStatus.swift; sourceTree = "<group>"; };
 		C5E91A9AA166C5F136756AB8 /* ConsumptionModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConsumptionModels.swift; sourceTree = "<group>"; };
 		C6B7AD7C2BA814DDB07D60BF /* ModelFamily.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelFamily.swift; sourceTree = "<group>"; };
 		D08AB0686BC1A2BCDB1921F6 /* HistorySettingsSections.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistorySettingsSections.swift; sourceTree = "<group>"; };
@@ -881,6 +883,7 @@
 			children = (
 				AA4B9C55FE4197EC74F2C212 /* ClaudeAccountUsage.swift */,
 				B85E31BCD6C1D621758C7F4D /* ClaudeAccountUsageFetcher.swift */,
+				C5B6D72C5BA35868968F0C25 /* ClaudeCLIAuthStatus.swift */,
 				9EA4DE6F31943BB0FFD88BAE /* ClaudeCodeConnector.swift */,
 				AAA3A78C97E64355426F0CFA /* ClaudeCodeConnectorInstaller.swift */,
 				3435AB2866C011AC4ABC4F88 /* ClaudeCodeHookModels.swift */,
@@ -1233,6 +1236,7 @@
 				52D3831C3F267840822AB390 /* BoundedJSONLReader.swift in Sources */,
 				4B5E3337ED34157968120764 /* ClaudeAccountUsage.swift in Sources */,
 				F75528C0A317B93E766335A2 /* ClaudeAccountUsageFetcher.swift in Sources */,
+				0B46BCC617C3BFBC1E1CB737 /* ClaudeCLIAuthStatus.swift in Sources */,
 				817C543306790280A3C62A1A /* ClaudeCodeConnector.swift in Sources */,
 				3A3D5F5B19EDE53D5D6F0B6F /* ClaudeCodeConnectorInstaller.swift in Sources */,
 				6E4A88E862526EF4F81B922D /* ClaudeCodeHookModels.swift in Sources */,

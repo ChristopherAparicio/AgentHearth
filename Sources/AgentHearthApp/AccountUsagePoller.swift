@@ -10,10 +10,14 @@ protocol AccountUsageFetching: Sendable {
     /// Drops any remembered credential verdict so the next fetch reopens the
     /// stores, dialogs and all.
     func forgetRememberedFailure() async
+    /// Identifies the credential stores' current state without opening them,
+    /// or nil when the fetcher cannot tell.
+    func credentialsFingerprint() -> String?
 }
 
 extension AccountUsageFetching {
     func forgetRememberedFailure() async {}
+    func credentialsFingerprint() -> String? { nil }
 }
 
 extension ClaudeAccountUsageFetcher: AccountUsageFetching {}
@@ -71,6 +75,12 @@ final class AccountUsagePoller {
     /// The last successful fetch, kept so toggling the scoped-limits
     /// preference re-applies immediately without another network call.
     private var lastUsage: AccountUsage?
+    /// The credential stores' fingerprint when the standing fault was found.
+    /// A fault of that kind clears only once a store is rewritten — which is
+    /// exactly what a sign-in does — so a changed fingerprint is the signal to
+    /// fetch at once rather than wait out a half-hour backoff behind a Retry
+    /// button nobody knew to press.
+    private var failureFingerprint: String?
 
     /// Whether per-model weekly limits are passed on to the connector.
     var showsScopedWeeklyLimits: Bool {
@@ -144,12 +154,13 @@ final class AccountUsagePoller {
     /// a failure), only when opted in. Success injects the authoritative windows —
     /// with reset timestamps — into the Claude connector.
     func refreshIfNeeded() async {
-        guard isEnabled, !isFetching, Date() >= nextFetchAt else { return }
+        guard isEnabled, !isFetching, Date() >= nextFetchAt || credentialsChangedSinceFailure() else { return }
         isFetching = true
         defer { isFetching = false }
         switch await fetcher.fetch() {
         case let .usage(usage):
             remedy = nil
+            failureFingerprint = nil
             signInGraceUntil = .distantPast
             lastUsage = usage
             await ingest(applyingPreferences(to: usage))
@@ -182,9 +193,15 @@ final class AccountUsagePoller {
     /// nothing to say it stopped moving.
     private func withdrawUsage(remedy newRemedy: AccountUsageRemedy) async {
         remedy = newRemedy
+        failureFingerprint = fetcher.credentialsFingerprint()
         guard lastUsage != nil else { return }
         lastUsage = nil
         await ingest(nil)
+    }
+
+    private func credentialsChangedSinceFailure() -> Bool {
+        guard remedy != nil, let failureFingerprint else { return false }
+        return fetcher.credentialsFingerprint() != failureFingerprint
     }
 
     private func backoff(normally interval: TimeInterval) -> Date {

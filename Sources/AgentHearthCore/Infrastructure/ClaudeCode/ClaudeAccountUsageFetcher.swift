@@ -158,15 +158,28 @@ public struct ClaudeAccountUsageFetcher: Sendable {
     /// at most one prompt per launch plus one per token refresh, instead of
     /// one per poll.
     private let credentialCache = CredentialCache()
+    /// The CLI's own verdict on whether it is signed in, consulted only when
+    /// the stores leave that open (see ``ClaudeCLIAuthStatus``). Nil means
+    /// "could not ask", which keeps the stores' reading.
+    let cliSignedIn: @Sendable () -> Bool?
 
     public init(
         now: @escaping @Sendable () -> Date = Date.init,
         session: URLSession = .shared,
-        stores: any ClaudeCredentialStoreReading = KeychainClaudeCredentialStore()
+        stores: any ClaudeCredentialStoreReading = KeychainClaudeCredentialStore(),
+        cliSignedIn: (@Sendable () -> Bool?)? = nil
     ) {
         self.now = now
         self.session = session
         self.stores = stores
+        self.cliSignedIn = cliSignedIn ?? { ClaudeCLIAuthStatus.isSignedIn() }
+    }
+
+    /// Identifies the current state of every credential store without opening
+    /// any of them, so a caller can tell that a sign-in has landed — the stores
+    /// are rewritten — and fetch at once instead of waiting out its backoff.
+    public func credentialsFingerprint() -> String? {
+        stores.stateToken()
     }
 
     public func fetch() async -> AccountUsageFetchOutcome {
@@ -366,7 +379,11 @@ public struct ClaudeAccountUsageFetcher: Sendable {
         // their sign-in is fine is the worse mistake.
         if wasDenied { return .accessDenied }
         if opened.contains(where: { Self.hasLiveRefreshToken($0, now: current) }) {
-            return .expiredButRefreshable
+            // A refresh token that looks alive may still have been revoked —
+            // the stores cannot tell. When the CLI says it is signed out, only
+            // a sign-in helps, and offering a relaunch instead is the advice
+            // that kept a signed-out account stuck for days.
+            return cliSignedIn() == false ? .signedOut : .expiredButRefreshable
         }
         return .signedOut
     }
