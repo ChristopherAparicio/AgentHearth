@@ -12,12 +12,12 @@ protocol AccountUsageFetching: Sendable {
     func forgetRememberedFailure() async
     /// Identifies the credential stores' current state without opening them,
     /// or nil when the fetcher cannot tell.
-    func credentialsFingerprint() -> String?
+    func credentialsFingerprint() async -> String?
 }
 
 extension AccountUsageFetching {
     func forgetRememberedFailure() async {}
-    func credentialsFingerprint() -> String? { nil }
+    func credentialsFingerprint() async -> String? { nil }
 }
 
 extension ClaudeAccountUsageFetcher: AccountUsageFetching {}
@@ -154,9 +154,19 @@ final class AccountUsagePoller {
     /// a failure), only when opted in. Success injects the authoritative windows —
     /// with reset timestamps — into the Claude connector.
     func refreshIfNeeded() async {
-        guard isEnabled, !isFetching, Date() >= nextFetchAt || credentialsChangedSinceFailure() else { return }
+        guard isEnabled, !isFetching else { return }
         isFetching = true
         defer { isFetching = false }
+        guard Date() >= nextFetchAt else {
+            // Inside the backoff, only a rewritten credential store — a sign-in
+            // landing — justifies fetching early.
+            guard await credentialsChangedSinceFailure() else { return }
+            return await fetchNow()
+        }
+        await fetchNow()
+    }
+
+    private func fetchNow() async {
         switch await fetcher.fetch() {
         case let .usage(usage):
             remedy = nil
@@ -193,15 +203,15 @@ final class AccountUsagePoller {
     /// nothing to say it stopped moving.
     private func withdrawUsage(remedy newRemedy: AccountUsageRemedy) async {
         remedy = newRemedy
-        failureFingerprint = fetcher.credentialsFingerprint()
+        failureFingerprint = await fetcher.credentialsFingerprint()
         guard lastUsage != nil else { return }
         lastUsage = nil
         await ingest(nil)
     }
 
-    private func credentialsChangedSinceFailure() -> Bool {
+    private func credentialsChangedSinceFailure() async -> Bool {
         guard remedy != nil, let failureFingerprint else { return false }
-        return fetcher.credentialsFingerprint() != failureFingerprint
+        return await fetcher.credentialsFingerprint() != failureFingerprint
     }
 
     private func backoff(normally interval: TimeInterval) -> Date {

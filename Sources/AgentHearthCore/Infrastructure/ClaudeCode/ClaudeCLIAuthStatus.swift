@@ -13,25 +13,33 @@ enum ClaudeCLIAuthStatus {
     /// `true`/`false` per `claude auth status`, or nil when the answer cannot
     /// be had: no CLI installed, no reply in time, or output it cannot parse.
     /// Callers fall back to their own reading of the stores on nil.
-    static func isSignedIn(timeout: TimeInterval = 5) -> Bool? {
-        guard let executable = ProviderCLI.localExecutableCandidates(for: .claudeCode)
-            .first(where: FileManager.default.isExecutableFile(atPath:))
+    ///
+    /// Runs through ``SystemSSHCommandRunner/execute`` rather than a bare
+    /// `Process`: it drains the pipes off the cooperative pool and kills a
+    /// child that outstays its timeout, and a wait that never ends here would
+    /// wedge the account-usage fetch for the life of the app.
+    static func isSignedIn(
+        executable: URL? = defaultExecutable(),
+        timeout: TimeInterval = 5
+    ) async -> Bool? {
+        guard let executable,
+              let result = try? await SystemSSHCommandRunner.execute(
+                  executableURL: executable,
+                  arguments: ["auth", "status"],
+                  standardInput: nil,
+                  timeout: timeout
+              ),
+              !result.timedOut
         else { return nil }
+        // The exit status is not consulted: a signed-out CLI may report its
+        // verdict with a failing status, and the JSON is what carries it.
+        return loggedIn(in: result.standardOutput)
+    }
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = ["auth", "status"]
-        let output = Pipe()
-        process.standardOutput = output
-        process.standardError = FileHandle.nullDevice
-        let finished = DispatchSemaphore(value: 0)
-        process.terminationHandler = { _ in finished.signal() }
-        do { try process.run() } catch { return nil }
-        guard finished.wait(timeout: .now() + timeout) == .success else {
-            process.terminate()
-            return nil
-        }
-        return loggedIn(in: output.fileHandleForReading.readDataToEndOfFile())
+    static func defaultExecutable() -> URL? {
+        ProviderCLI.localExecutableCandidates(for: .claudeCode)
+            .first(where: FileManager.default.isExecutableFile(atPath:))
+            .map(URL.init(fileURLWithPath:))
     }
 
     static func loggedIn(in data: Data) -> Bool? {
