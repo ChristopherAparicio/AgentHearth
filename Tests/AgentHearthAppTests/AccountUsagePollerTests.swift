@@ -10,6 +10,9 @@ private final class FakeAccountUsageFetcher: AccountUsageFetching, @unchecked Se
     /// Held while a fetch is in flight so a second, concurrent call is
     /// observable rather than merely fast.
     var gate: (@Sendable () async -> Void)?
+    /// Stands for the credential stores' state; changing it is what a sign-in
+    /// looks like from the poller's side.
+    var fingerprint: String? = "before"
 
     func fetch() async -> AccountUsageFetchOutcome {
         fetchCount += 1
@@ -20,6 +23,8 @@ private final class FakeAccountUsageFetcher: AccountUsageFetching, @unchecked Se
     func forgetRememberedFailure() async {
         forgetCount += 1
     }
+
+    func credentialsFingerprint() -> String? { fingerprint }
 }
 
 @MainActor
@@ -245,6 +250,26 @@ final class AccountUsagePollerTests: XCTestCase {
         await poller.refreshIfNeeded()
 
         XCTAssertEqual(fetcher.fetchCount, 1)
+    }
+
+    /// A sign-in rewrites the credential stores. Waiting out the half-hour
+    /// backoff after that — or for someone to find Settings → Retry Now —
+    /// left the banner up long after the fix had landed.
+    func testASignInIsPickedUpWithoutWaitingOutTheBackoff() async {
+        let fetcher = FakeAccountUsageFetcher()
+        let (poller, _) = makePoller(fetcher)
+        fetcher.outcome = .signedOut
+
+        await poller.refreshIfNeeded()
+        await poller.refreshIfNeeded()
+        XCTAssertEqual(fetcher.fetchCount, 1, "unchanged stores must keep the backoff")
+
+        fetcher.fingerprint = "after sign-in"
+        fetcher.outcome = .usage(usage())
+        await poller.refreshIfNeeded()
+
+        XCTAssertEqual(fetcher.fetchCount, 2)
+        XCTAssertNil(poller.remedy)
     }
 
     // MARK: - Retry

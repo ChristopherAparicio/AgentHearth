@@ -73,7 +73,8 @@ final class ClaudeAccountUsageFetcherTests: XCTestCase {
         config.protocolClasses = [StubURLProtocol.self]
         return ClaudeAccountUsageFetcher(
             now: { Date(timeIntervalSince1970: 1_000) },
-            session: URLSession(configuration: config)
+            session: URLSession(configuration: config),
+            cliSignedIn: { nil }
         )
     }
 
@@ -173,13 +174,17 @@ final class ClaudeAccountUsageFetcherTests: XCTestCase {
 
     // MARK: - Classification, end to end
 
-    private func makeFetcher(stores: StubCredentialStore) -> ClaudeAccountUsageFetcher {
+    private func makeFetcher(
+        stores: StubCredentialStore,
+        cliSignedIn: Bool? = nil
+    ) -> ClaudeAccountUsageFetcher {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [StubURLProtocol.self]
         return ClaudeAccountUsageFetcher(
             now: { Date(timeIntervalSince1970: 10_000) },
             session: URLSession(configuration: config),
-            stores: stores
+            stores: stores,
+            cliSignedIn: { cliSignedIn }
         )
     }
 
@@ -204,6 +209,39 @@ final class ClaudeAccountUsageFetcherTests: XCTestCase {
         ])).fetch()
 
         guard case .tokenExpired = outcome else { return XCTFail("expected tokenExpired, got \(outcome)") }
+    }
+
+    /// The stores cannot tell a live refresh token from a revoked one, and the
+    /// fallback file does not even record when it expires. When the CLI says
+    /// it is signed out, offering "Open Claude Code" is useless — launching
+    /// the CLI signs nobody in — so this must ask for a sign-in.
+    func testARefreshTokenTheCLIDisownsReportsSignedOut() async {
+        let outcome = await makeFetcher(
+            stores: StubCredentialStore(items: [
+                ("Claude Code-credentials", 0, .data(Self.lapsedButRefreshable)),
+            ]),
+            cliSignedIn: false
+        ).fetch()
+
+        guard case .signedOut = outcome else { return XCTFail("expected signedOut, got \(outcome)") }
+    }
+
+    func testARefreshTokenTheCLIVouchesForStillReportsExpired() async {
+        let outcome = await makeFetcher(
+            stores: StubCredentialStore(items: [
+                ("Claude Code-credentials", 0, .data(Self.lapsedButRefreshable)),
+            ]),
+            cliSignedIn: true
+        ).fetch()
+
+        guard case .tokenExpired = outcome else { return XCTFail("expected tokenExpired, got \(outcome)") }
+    }
+
+    func testReadsTheCLIStatusVerdict() {
+        XCTAssertEqual(ClaudeCLIAuthStatus.loggedIn(in: Data(#"{"loggedIn": true, "authMethod": "claude.ai"}"#.utf8)), true)
+        XCTAssertEqual(ClaudeCLIAuthStatus.loggedIn(in: Data(#"{"loggedIn": false, "authMethod": "none"}"#.utf8)), false)
+        XCTAssertNil(ClaudeCLIAuthStatus.loggedIn(in: Data("not json".utf8)))
+        XCTAssertNil(ClaudeCLIAuthStatus.loggedIn(in: Data(#"{"authMethod": "none"}"#.utf8)))
     }
 
     /// A refused read must not be reported as an absent sign-in: the account is

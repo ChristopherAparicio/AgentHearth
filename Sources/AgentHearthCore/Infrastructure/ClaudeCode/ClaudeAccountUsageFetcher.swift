@@ -158,15 +158,28 @@ public struct ClaudeAccountUsageFetcher: Sendable {
     /// at most one prompt per launch plus one per token refresh, instead of
     /// one per poll.
     private let credentialCache = CredentialCache()
+    /// The CLI's own verdict on whether it is signed in, consulted only when
+    /// the stores leave that open (see ``ClaudeCLIAuthStatus``). Nil means
+    /// "could not ask", which keeps the stores' reading.
+    let cliSignedIn: @Sendable () async -> Bool?
 
     public init(
         now: @escaping @Sendable () -> Date = Date.init,
         session: URLSession = .shared,
-        stores: any ClaudeCredentialStoreReading = KeychainClaudeCredentialStore()
+        stores: any ClaudeCredentialStoreReading = KeychainClaudeCredentialStore(),
+        cliSignedIn: (@Sendable () async -> Bool?)? = nil
     ) {
         self.now = now
         self.session = session
         self.stores = stores
+        self.cliSignedIn = cliSignedIn ?? { await ClaudeCLIAuthStatus.isSignedIn() }
+    }
+
+    /// Identifies the current state of every credential store without opening
+    /// any of them, so a caller can tell that a sign-in has landed — the stores
+    /// are rewritten — and fetch at once instead of waiting out its backoff.
+    public func credentialsFingerprint() async -> String? {
+        stores.stateToken()
     }
 
     public func fetch() async -> AccountUsageFetchOutcome {
@@ -190,7 +203,7 @@ public struct ClaudeAccountUsageFetcher: Sendable {
             if let remembered = await credentialCache.rememberedFailure(for: token) {
                 return remembered
             }
-            let lookup = readCredentials()
+            let lookup = await readCredentials()
             switch lookup {
             case let .found(fresh):
                 credentials = fresh
@@ -314,7 +327,7 @@ public struct ClaudeAccountUsageFetcher: Sendable {
         case accessDenied
     }
 
-    private func readCredentials() -> CredentialLookup {
+    private func readCredentials() async -> CredentialLookup {
         let current = now()
         // Every store we could actually open, kept so a sweep that finds no
         // usable token can still tell "signed out" from "expired but
@@ -366,7 +379,11 @@ public struct ClaudeAccountUsageFetcher: Sendable {
         // their sign-in is fine is the worse mistake.
         if wasDenied { return .accessDenied }
         if opened.contains(where: { Self.hasLiveRefreshToken($0, now: current) }) {
-            return .expiredButRefreshable
+            // A refresh token that looks alive may still have been revoked —
+            // the stores cannot tell. When the CLI says it is signed out, only
+            // a sign-in helps, and offering a relaunch instead is the advice
+            // that kept a signed-out account stuck for days.
+            return await cliSignedIn() == false ? .signedOut : .expiredButRefreshable
         }
         return .signedOut
     }
