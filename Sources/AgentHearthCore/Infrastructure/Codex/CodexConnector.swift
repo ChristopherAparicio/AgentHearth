@@ -170,7 +170,8 @@ public actor CodexConnector: ProviderConnector {
                 providerID: providerID,
                 sessionID: resolvedID,
                 workingDirectory: directory
-            )
+            ),
+            requests: summary.requests
         )
 
         return ParsedRollout(
@@ -219,6 +220,8 @@ public actor CodexConnector: ProviderConnector {
         var cacheEvidence = CacheEvidenceAccumulator(
             policy: .init(eligibilityWindow: .previousTurn, tokenTotals: .always)
         )
+        var requests: [TokenUsageRecord] = []
+        var recordedTotals: Set<Int> = []
 
         for record in records {
             let timestamp = record.timestamp.flatMap(Self.parseDate)
@@ -240,6 +243,22 @@ public actor CodexConnector: ProviderConnector {
                     latestTokenRecord = (timestamp, info, record.payload?.rateLimits)
                     if let rateLimits = record.payload?.rateLimits {
                         quotaReports.append((timestamp, rateLimits))
+                    }
+                    if let usage = info.lastTokenUsage,
+                       let total = info.totalTokenUsage?.totalTokens,
+                       recordedTotals.insert(total).inserted {
+                        // Codex's input includes the cached part; keep it
+                        // fresh-only, as `makeCache` does.
+                        let cached = max(0, usage.cachedInputTokens ?? 0)
+                        requests.append(TokenUsageRecord(
+                            id: "\(sessionID ?? candidate.url.lastPathComponent):\(total)",
+                            occurredAt: timestamp,
+                            model: model,
+                            inputTokens: max(0, (usage.inputTokens ?? 0) - cached),
+                            cachedReadTokens: cached,
+                            cacheWriteTokens: max(0, usage.cacheWriteInputTokens ?? 0),
+                            outputTokens: max(0, usage.outputTokens ?? 0)
+                        ))
                     }
                     if let observation = Self.evidenceObservation(
                         for: info.lastTokenUsage,
@@ -263,7 +282,8 @@ public actor CodexConnector: ProviderConnector {
             lastLifecycleAt: lastLifecycleAt,
             latestTokenRecord: latestTokenRecord,
             quotaReports: quotaReports,
-            cacheEvidence: cacheEvidence
+            cacheEvidence: cacheEvidence,
+            requests: requests
         )
     }
 
@@ -350,7 +370,8 @@ public actor CodexConnector: ProviderConnector {
                 providerID: providerID,
                 sessionID: local.id,
                 workingDirectory: directory
-            )
+            ),
+            requests: local.requests
         )
     }
 

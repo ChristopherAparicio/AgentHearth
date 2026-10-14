@@ -50,6 +50,7 @@ struct ClaudeTranscriptSummary {
     let latestTurnEndedAt: Date?
     let latestUsage: ClaudeUsageObservation?
     let evidence: CacheEvidenceAccumulator
+    let requests: [TokenUsageRecord]
 }
 
 struct CachedTranscriptSummary {

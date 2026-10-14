@@ -46,7 +46,7 @@ struct HistoryDashboardView: View {
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Cache Insights").font(.title2.weight(.bold))
-                    Text("Token reuse measured on completed provider turns")
+                    Text("Token reuse measured on each provider request")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
@@ -110,10 +110,10 @@ struct HistoryDashboardView: View {
             HistoryMetricCard(
                 title: "Cache hits",
                 value: percent(snapshot.hitRate),
-                detail: "\(snapshot.hitCount) of \(snapshot.turnCount) turns",
+                detail: "\(snapshot.hitCount) of \(snapshot.turnCount) requests",
                 symbol: "checkmark.circle.fill",
                 color: .green,
-                info: "A hit is a completed turn whose reused input reaches \(model.cacheHitThreshold)% or more. Change the threshold in Settings."
+                info: "A hit is a request whose reused input reaches \(model.cacheHitThreshold)% or more. Change the threshold in Settings."
             )
             HistoryMetricCard(
                 title: "Uncached input",
@@ -125,7 +125,7 @@ struct HistoryDashboardView: View {
             HistoryMetricCard(
                 title: "Output",
                 value: tokens(snapshot.outputTokens),
-                detail: "Across \(snapshot.turnCount) completed turns",
+                detail: "Across \(snapshot.turnCount) requests",
                 symbol: "arrow.up.circle",
                 color: .blue
             )
@@ -197,7 +197,7 @@ struct HistoryDashboardView: View {
                             Text(project.projectName)
                                 .font(.callout.weight(.semibold))
                                 .lineLimit(1)
-                            Text("\(project.turnCount) measured turns")
+                            Text("\(project.turnCount) measured requests")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -305,7 +305,7 @@ struct HistoryDashboardView: View {
         let scope = total > listed
             ? "Showing the \(listed) costliest of \(total). "
             : ""
-        return scope + "Sampled from measured turns, so a change made and reverted between two samples is not counted."
+        return scope + "Sampled from measured requests, so a change made and reverted between two samples is not counted."
     }
 
     private func plural(_ value: Int, _ singular: String, _ plural: String) -> String {
@@ -335,7 +335,7 @@ struct HistoryDashboardView: View {
             Spacer(minLength: 16)
 
             VStack(alignment: .trailing, spacing: 4) {
-                Text("\(percent(session.cacheReuseRate)) cache · \(session.hitCount)/\(session.turnCount) turns")
+                Text("\(percent(session.cacheReuseRate)) cache · \(session.hitCount)/\(session.turnCount) requests")
                     .font(.callout.weight(.semibold).monospacedDigit())
                     .foregroundStyle(color(for: session.cacheReuseRate))
                 Text("\(tokens(session.cachedInputTokens)) cached · \(tokens(session.uncachedInputTokens)) uncached · \(tokens(session.outputTokens)) output")
@@ -348,9 +348,9 @@ struct HistoryDashboardView: View {
 
     private var emptyState: some View {
         ContentUnavailableView(
-            "No measured turns yet",
+            "No measured requests yet",
             systemImage: "chart.bar.xaxis",
-            description: Text("Insights records completed provider turns when input and cache-token telemetry are available.")
+            description: Text("Insights records each provider request when input and cache-token telemetry are available.")
         )
         .frame(maxWidth: .infinity, minHeight: 360)
     }
