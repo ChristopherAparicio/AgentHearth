@@ -8,7 +8,7 @@ import SwiftUI
 /// Deliberately separate from the Cache Insights dashboard. That view asks
 /// whether the prompt cache is being wasted over days; this one asks what just
 /// consumed the 5h window. They also rest on different evidence — account-level
-/// readings here, sampled per-turn counters there — and showing two token
+/// readings here, per-request counters there — and showing two token
 /// figures of different provenance side by side would invite comparing numbers
 /// that are not meant to agree.
 struct ConsumptionView: View {
@@ -276,7 +276,7 @@ struct ConsumptionView: View {
                         }
                         Spacer()
                         VStack(alignment: .trailing, spacing: 2) {
-                            Text("\(tokens(model.inFlightCost(session))) this turn")
+                            Text("\(tokens(model.inFlightCost(session))) last request")
                                 .font(.callout.weight(.semibold).monospacedDigit())
                                 .foregroundStyle(.orange)
                             Text(session.model.map(modelLabel) ?? session.providerID.displayName)
@@ -292,7 +292,7 @@ struct ConsumptionView: View {
                 Label("Working now", systemImage: "bolt.horizontal.circle")
                     .font(.headline)
                 Spacer()
-                HelpButton(text: "A turn is only recorded once it finishes, so these sessions contribute nothing to the ranking below however much they are spending. The figure is their current turn, not a total for the range — which is exactly the shape a runaway loop takes.")
+                HelpButton(text: "Claude Code and Codex requests are recorded as they land, so these sessions already count below; other agents' turns are recorded once they finish. The figure is the latest request, not a total for the range — a runaway loop is one that keeps it high.")
             }
         }
     }
@@ -330,7 +330,7 @@ struct ConsumptionView: View {
             }
         } label: {
             HStack {
-                Label("Measured turns", systemImage: "list.number")
+                Label("Measured requests", systemImage: "list.number")
                     .font(.headline)
                 Spacer()
                 Text("ranked by billable tokens")
@@ -354,8 +354,8 @@ struct ConsumptionView: View {
     private var noSessions: some View {
         emptyBox(
             symbol: "moon.zzz",
-            title: "No measured turns in this range",
-            detail: "Nothing finished a turn here. A window that moved anyway was spent by a session still working, or from another machine."
+            title: "No measured requests in this range",
+            detail: "Nothing was recorded here. A window that moved anyway was spent from another machine, or by an agent whose turns are recorded once they finish."
         )
     }
 
@@ -384,7 +384,7 @@ struct ConsumptionView: View {
     }
 
     private var footer: some View {
-        Text("Windows are the provider's own account-level readings. The session ranking is AgentHearth's per-turn sampling, so a session's share of a window is a ranking, not an audit: with several agents running, nothing in the counters says which one moved the account figure.")
+        Text("Windows are the provider's own account-level readings. The session ranking is AgentHearth's per-request measurement, so a session's share of a window is a ranking, not an audit: with several agents running, nothing in the counters says which one moved the account figure.")
             .font(.caption)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
@@ -417,7 +417,7 @@ struct ConsumptionView: View {
 
     private func context(_ session: SessionHistorySummary) -> String {
         [session.providerID.displayName, session.sourceName ?? session.hostName,
-         "\(session.turnCount) turns"]
+         "\(session.turnCount) requests"]
             .joined(separator: " · ")
     }
 

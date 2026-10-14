@@ -283,6 +283,98 @@ final class HistoryStoreTests: XCTestCase {
         XCTAssertEqual(surge.gainedPoints, 13, accuracy: 0.0001)
     }
 
+    func testRecordsEveryRequestOfAMultiRequestClaudeTurn() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let projects = directory.appending(path: "projects/demo")
+        try FileManager.default.createDirectory(at: projects, withIntermediateDirectories: true)
+        let transcript = projects.appending(path: "turn.jsonl")
+        let at = { (seconds: Double) in ISO8601DateFormatter().string(from: Date.now.addingTimeInterval(seconds - 600)) }
+        func line(_ type: String, _ seconds: Double, _ message: String = "", request: String = "") -> String {
+            #"{"type":"\#(type)","timestamp":"\#(at(seconds))","sessionId":"multi","cwd":"/tmp/AgentHearth","requestId":"\#(request)"\#(message)}"#
+        }
+        func assistant(_ seconds: Double, id: String, fresh: Int, read: Int, written: Int, output: Int) -> String {
+            line("assistant", seconds, #","message":{"id":"\#(id)","model":"claude-test","usage":{"input_tokens":\#(fresh),"cache_read_input_tokens":\#(read),"cache_creation_input_tokens":\#(written),"output_tokens":\#(output)}}"#, request: "r-\(id)")
+        }
+        // One turn, three API requests (two tool calls, then the answer). The
+        // second request spans two lines; the later one has the final output.
+        try [
+            line("user", 0),
+            assistant(1, id: "m1", fresh: 10, read: 0, written: 1_000, output: 5),
+            assistant(2, id: "m2", fresh: 2, read: 1_000, written: 50, output: 1),
+            assistant(3, id: "m2", fresh: 2, read: 1_000, written: 50, output: 40),
+            assistant(4, id: "m3", fresh: 3, read: 1_050, written: 20, output: 300),
+            #"{"type":"system","subtype":"turn_duration","timestamp":"\#(at(5))","sessionId":"multi"}"#
+        ].joined(separator: "\n").write(to: transcript, atomically: true, encoding: .utf8)
+
+        let connector = ClaudeCodeConnector(projectsURL: directory.appending(path: "projects"))
+        let store = HistoryStore(databaseURL: directory.appending(path: "history.sqlite"))
+        // Re-reading the same transcript, as every poll does, adds nothing.
+        for _ in 0..<2 {
+            await store.ingest([try await connector.snapshot()], retentionDays: 30)
+        }
+
+        let dashboard = await store.dashboard(days: 7)
+        XCTAssertEqual(dashboard.turnCount, 3, "one row per request, not one per turn")
+        XCTAssertEqual(dashboard.inputTokens, 1_010 + 1_052 + 1_073)
+        XCTAssertEqual(dashboard.cachedInputTokens, 2_050)
+        XCTAssertEqual(dashboard.outputTokens, 5 + 40 + 300)
+    }
+
+    func testRecordsEachCodexRequestOnceDespiteReEmittedTotals() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let sessions = directory.appending(path: "sessions")
+        try FileManager.default.createDirectory(at: sessions, withIntermediateDirectories: true)
+        let at = { (seconds: Double) in ISO8601DateFormatter().string(from: Date.now.addingTimeInterval(seconds - 600)) }
+        func tokens(_ seconds: Double, last: (Int, Int, Int), total: Int) -> String {
+            #"{"timestamp":"\#(at(seconds))","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"total_tokens":\#(total)},"last_token_usage":{"input_tokens":\#(last.0),"cached_input_tokens":\#(last.1),"output_tokens":\#(last.2)}}}}"#
+        }
+        // Codex re-emits a request's usage with an unchanged running total.
+        try [
+            #"{"timestamp":"\#(at(0))","type":"session_meta","payload":{"id":"codex-multi","cwd":"/tmp/AgentHearth"}}"#,
+            tokens(1, last: (1_000, 0, 10), total: 1_010),
+            tokens(2, last: (1_000, 0, 10), total: 1_010),
+            tokens(3, last: (1_200, 1_000, 20), total: 2_230),
+            #"{"timestamp":"\#(at(4))","type":"event_msg","payload":{"type":"task_complete"}}"#
+        ].joined(separator: "\n").write(to: sessions.appending(path: "rollout.jsonl"), atomically: true, encoding: .utf8)
+
+        let connector = CodexConnector(sessionsURL: sessions)
+        let store = HistoryStore(databaseURL: directory.appending(path: "history.sqlite"))
+        for _ in 0..<2 {
+            await store.ingest([try await connector.snapshot()], retentionDays: 30)
+        }
+
+        let dashboard = await store.dashboard(days: 7)
+        XCTAssertEqual(dashboard.turnCount, 2)
+        XCTAssertEqual(dashboard.inputTokens, 2_200, "Codex input already includes its cached part")
+        XCTAssertEqual(dashboard.cachedInputTokens, 1_000)
+        XCTAssertEqual(dashboard.outputTokens, 30)
+    }
+
+    func testRequestRowsReplaceTheTurnRowsRecordedBeforeThem() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = HistoryStore(databaseURL: directory.appending(path: "history.sqlite"))
+        let time = Date.now.addingTimeInterval(-60)
+        // What an earlier version stored: each turn's last request only. The
+        // older turn predates the requests the log still shows, so it stays.
+        await store.ingest([snapshot(status: .idle, input: 50, cached: 0, output: 5, at: time.addingTimeInterval(-3_600))], retentionDays: 30)
+        await store.ingest([snapshot(status: .idle, input: 200, cached: 1_000, output: 20, at: time)], retentionDays: 30)
+
+        let requests = [
+            TokenUsageRecord(id: "a", occurredAt: time.addingTimeInterval(-5), model: "gpt-test", inputTokens: 1_000, cachedReadTokens: 0, cacheWriteTokens: 0, outputTokens: 10),
+            TokenUsageRecord(id: "b", occurredAt: time, model: "gpt-test", inputTokens: 200, cachedReadTokens: 1_000, cacheWriteTokens: 0, outputTokens: 20)
+        ]
+        await store.ingest([ProviderSnapshot(id: .codex, connectionState: .connected, sessions: [
+            AgentSession(id: "session-1", providerID: .codex, title: "AgentHearth history", projectName: "AgentHearth", status: .idle, lastActivityAt: time, target: SessionTarget(providerID: .codex, sessionID: "session-1"), requests: requests)
+        ], usageWindows: [], updatedAt: time)], retentionDays: 30)
+
+        let dashboard = await store.dashboard(days: 7)
+        XCTAssertEqual(dashboard.turnCount, 3)
+        XCTAssertEqual(dashboard.inputTokens, 50 + 2_200)
+    }
+
     private func usageSnapshot(fraction: Double, at measuredAt: Date) -> ProviderSnapshot {
         ProviderSnapshot(
             id: .claudeCode,

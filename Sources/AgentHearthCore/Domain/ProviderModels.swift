@@ -319,6 +319,40 @@ public struct SessionTarget: Codable, Equatable, Sendable {
     }
 }
 
+/// One provider request's token usage, as the agent's own log recorded it.
+/// A turn makes one request per tool call, so a session's latest `cache`
+/// describes only the last of them; history records each of these instead.
+public struct TokenUsageRecord: Codable, Equatable, Sendable {
+    /// Stable identity of the request within its provider, so the same
+    /// request read again on a later poll is recognised rather than recounted.
+    public let id: String
+    public let occurredAt: Date
+    public let model: String?
+    /// Fresh (uncached) input, as in ``CacheSnapshot/inputTokens``.
+    public let inputTokens: Int
+    public let cachedReadTokens: Int
+    public let cacheWriteTokens: Int
+    public let outputTokens: Int
+
+    public init(
+        id: String,
+        occurredAt: Date,
+        model: String?,
+        inputTokens: Int,
+        cachedReadTokens: Int,
+        cacheWriteTokens: Int,
+        outputTokens: Int
+    ) {
+        self.id = id
+        self.occurredAt = occurredAt
+        self.model = model
+        self.inputTokens = inputTokens
+        self.cachedReadTokens = cachedReadTokens
+        self.cacheWriteTokens = cacheWriteTokens
+        self.outputTokens = outputTokens
+    }
+}
+
 public struct AgentSession: Identifiable, Codable, Equatable, Sendable {
     public let id: String
     public let providerID: AgentProviderID
@@ -332,6 +366,9 @@ public struct AgentSession: Identifiable, Codable, Equatable, Sendable {
     public let target: SessionTarget?
     public let host: AgentHost
     public let source: AgentSource?
+    /// Every request the agent's log holds for this session, oldest first.
+    /// Empty for sources that only report the latest request (`cache`).
+    public let requests: [TokenUsageRecord]
 
     public init(
         id: String,
@@ -345,7 +382,8 @@ public struct AgentSession: Identifiable, Codable, Equatable, Sendable {
         cacheHealth: CacheHealthSnapshot? = nil,
         target: SessionTarget? = nil,
         host: AgentHost = .local,
-        source: AgentSource? = nil
+        source: AgentSource? = nil,
+        requests: [TokenUsageRecord] = []
     ) {
         self.id = id
         self.providerID = providerID
@@ -359,6 +397,7 @@ public struct AgentSession: Identifiable, Codable, Equatable, Sendable {
         self.target = target
         self.host = host
         self.source = source
+        self.requests = requests
     }
 }
 

@@ -3,8 +3,9 @@ import AgentHearthDomain
 import Foundation
 import SQLite3
 
-/// Stores a final raw-token measurement per provider turn. Counter-only history
-/// is intentionally rebuilt at schema v2 because it cannot yield a truthful
+/// Stores a raw-token measurement per provider request — or, for sources that
+/// only report a session's latest usage, per turn. Counter-only history is
+/// intentionally rebuilt at schema v2 because it cannot yield a truthful
 /// cache-reuse percentage.
 public actor HistoryStore {
     /// A turn counts as a cache hit when its cached share of the input meets
@@ -38,6 +39,10 @@ public actor HistoryStore {
     private let databaseURL: URL
     nonisolated(unsafe) private var database: OpaquePointer?
     private var lastPrunedAt: Date?
+    /// Counters last written per request row, so a poll re-reading an
+    /// unchanged log writes nothing. Rebuilt on each ingest from the requests
+    /// still in view, which bounds it to the connectors' own window.
+    private var recordedRequests: [String: [Int]] = [:]
 
     public init(databaseURL: URL = FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Application Support/AgentHearth/history.sqlite")) {
         self.databaseURL = databaseURL
@@ -48,7 +53,16 @@ public actor HistoryStore {
     public func ingest(_ snapshots: [ProviderSnapshot], retentionDays: Int) {
         guard let database = openDatabase() else { return }
         sqlite3_exec(database, "BEGIN IMMEDIATE", nil, nil, nil)
+        // Requests older than the retention would only be pruned again.
+        let notBefore = milliseconds(Date.now.addingTimeInterval(-TimeInterval(max(1, retentionDays) * 86_400)))
+        var seenRequests: [String: [Int]] = [:]
         for session in snapshots.flatMap(\.sessions) {
+            // A turn makes one request per tool call, and `cache` only holds
+            // the last; when the log lists every request, record those.
+            if !session.requests.isEmpty {
+                insertRequests(database: database, session: session, notBefore: notBefore, seen: &seenRequests)
+                continue
+            }
             // Working sessions often emit progressive totals. Wait for the
             // terminal state to avoid treating one turn as several turns.
             guard [.idle, .completed, .failed].contains(session.status) else { continue }
@@ -65,6 +79,7 @@ public actor HistoryStore {
                 insertUsageSample(database: database, providerID: snapshot.id, window: window)
             }
         }
+        recordedRequests = seenRequests
         let pruned = prune(database: database, retentionDays: retentionDays)
         sqlite3_exec(database, "COMMIT", nil, nil, nil)
         // A checkpoint cannot make progress inside the write transaction it is
@@ -142,7 +157,7 @@ public actor HistoryStore {
     ///
     /// The two halves answer different questions and come from different
     /// sources: the timelines are the provider's own account-level readings,
-    /// while the ranking is AgentHearth's per-turn sampling. A session's share
+    /// while the ranking is AgentHearth's per-request measurement. A session's share
     /// of a window is therefore a ranking, not an audit — several agents run
     /// concurrently and nothing in the counters says which one moved the
     /// account-wide figure.
@@ -178,6 +193,7 @@ public actor HistoryStore {
     public func clear() {
         guard let database = openDatabase() else { return }
         sqlite3_exec(database, "DELETE FROM cache_events; DELETE FROM usage_samples; VACUUM;", nil, nil, nil)
+        recordedRequests = [:]
     }
 
     public func applyRetention(days: Int) {
@@ -272,27 +288,94 @@ public actor HistoryStore {
             return
         }
 
-        let externalID = "\(key):\(milliseconds(session.lastActivityAt))"
+        writeRow(
+            database: database,
+            conflict: "DO NOTHING",
+            externalID: "\(key):\(milliseconds(session.lastActivityAt))",
+            session: session,
+            model: session.model,
+            occurredAt: session.lastActivityAt,
+            counters: [totalInput, cached, output]
+        )
+    }
+
+    /// One row per request, keyed by the request's own id rather than the
+    /// session's activity time, so re-reading the log never adds a row. The
+    /// key omits the session: a forked session copies its parent's requests.
+    /// A request's last log line carries its final output count, so a row
+    /// that already exists takes the newer counters.
+    private func insertRequests(
+        database: OpaquePointer,
+        session: AgentSession,
+        notBefore: Int64,
+        seen: inout [String: [Int]]
+    ) {
+        var wrote = false
+        for request in session.requests where milliseconds(request.occurredAt) >= notBefore {
+            let totalInput = request.inputTokens + request.cachedReadTokens + request.cacheWriteTokens
+            guard totalInput > 0 else { continue }
+            let externalID = "req:\(session.providerID.rawValue):\(session.host.id):\(request.id)"
+            let counters = [totalInput, request.cachedReadTokens, request.outputTokens]
+            seen[externalID] = counters
+            guard recordedRequests[externalID] != counters else { continue }
+            writeRow(
+                database: database,
+                conflict: """
+                DO UPDATE SET input_tokens=excluded.input_tokens,
+                  cached_input_tokens=excluded.cached_input_tokens,output_tokens=excluded.output_tokens
+                """,
+                externalID: externalID,
+                session: session,
+                model: request.model ?? session.model,
+                occurredAt: request.occurredAt,
+                counters: counters
+            )
+            wrote = true
+        }
+        // Rows recorded before per-request history held each turn's last
+        // request, stamped at or after it. From the first request in view on,
+        // the rows above cover those turns; earlier ones are all there is.
+        guard wrote, let first = session.requests.map(\.occurredAt).min() else { return }
+        var statement: OpaquePointer?
+        let sql = "DELETE FROM cache_events WHERE session_key=? AND occurred_at_ms>=? AND external_id NOT LIKE 'req:%'"
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK, let statement else { return }
+        defer { sqlite3_finalize(statement) }
+        bind(sessionKey(session), to: statement, at: 1)
+        sqlite3_bind_int64(statement, 2, milliseconds(first))
+        sqlite3_step(statement)
+    }
+
+    /// `counters` is total input (fresh + cache-read + cache-write), cache
+    /// read, output.
+    private func writeRow(
+        database: OpaquePointer,
+        conflict: String,
+        externalID: String,
+        session: AgentSession,
+        model: String?,
+        occurredAt: Date,
+        counters: [Int]
+    ) {
         let sql = """
-        INSERT OR IGNORE INTO cache_events(
+        INSERT INTO cache_events(
           external_id,session_key,provider,host_name,source_name,project_name,
           title,model,occurred_at_ms,input_tokens,cached_input_tokens,output_tokens
-        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(external_id) \(conflict)
         """
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK, let statement else { return }
         defer { sqlite3_finalize(statement) }
-        bind(externalID, to: statement, at: 1); bind(key, to: statement, at: 2)
+        bind(externalID, to: statement, at: 1); bind(sessionKey(session), to: statement, at: 2)
         bind(session.providerID.rawValue, to: statement, at: 3)
         bind(session.host.displayName, to: statement, at: 4)
         bindOptional(session.source?.displayName, to: statement, at: 5)
         bind(projectName(for: session), to: statement, at: 6)
         bind(session.title, to: statement, at: 7)
-        bindOptional(session.model, to: statement, at: 8)
-        sqlite3_bind_int64(statement, 9, milliseconds(session.lastActivityAt))
-        sqlite3_bind_int64(statement, 10, Int64(totalInput))
-        sqlite3_bind_int64(statement, 11, Int64(cached))
-        sqlite3_bind_int64(statement, 12, Int64(output))
+        bindOptional(model, to: statement, at: 8)
+        sqlite3_bind_int64(statement, 9, milliseconds(occurredAt))
+        for (offset, value) in counters.enumerated() {
+            sqlite3_bind_int64(statement, Int32(10 + offset), Int64(value))
+        }
         sqlite3_step(statement)
     }
 

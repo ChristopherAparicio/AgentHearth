@@ -51,6 +51,7 @@ struct CodexRolloutSummary {
     /// one actually constraining the account.
     let quotaReports: [(Date, CodexRateLimits)]
     let cacheEvidence: CacheEvidenceAccumulator
+    let requests: [TokenUsageRecord]
 }
 
 struct CachedRolloutSummary {
@@ -99,9 +100,13 @@ struct CodexRolloutRecord: Decodable {
 
 struct CodexTokenInfo: Decodable {
     let lastTokenUsage: CodexTokenUsage?
+    /// Running total for the session. Codex re-emits a request's usage
+    /// several times; each distinct total is one request.
+    let totalTokenUsage: CodexTokenUsage?
 
     enum CodingKeys: String, CodingKey {
         case lastTokenUsage = "last_token_usage"
+        case totalTokenUsage = "total_token_usage"
     }
 }
 
@@ -110,12 +115,14 @@ struct CodexTokenUsage: Decodable {
     let cachedInputTokens: Int?
     let cacheWriteInputTokens: Int?
     let outputTokens: Int?
+    let totalTokens: Int?
 
     enum CodingKeys: String, CodingKey {
         case inputTokens = "input_tokens"
         case cachedInputTokens = "cached_input_tokens"
         case cacheWriteInputTokens = "cache_write_input_tokens"
         case outputTokens = "output_tokens"
+        case totalTokens = "total_tokens"
     }
 }
 
