@@ -433,6 +433,32 @@ final class ClaudeCodeConnectorTests: XCTestCase {
         XCTAssertEqual(weekly.usedFraction, 0.18, accuracy: 0.0001)
     }
 
+    /// What a relaunch looks like: the account is fetched at launch, then the
+    /// first relay of an idle session arrives seconds later with its old
+    /// figures. Nothing tells those apart from a fresh measurement — no
+    /// change has been seen — so they must not override the account.
+    func testTheFirstRelayAfterALaunchDoesNotOverrideTheAccount() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let connector = ClaudeCodeConnector(
+            projectsURL: root,
+            planUsageHistoryURL: root.appending(path: "missing.json"),
+            now: { Date(timeIntervalSince1970: 10_000) }
+        )
+        await connector.ingestAccountUsage(AccountUsage(
+            fiveHour: nil,
+            sevenDay: .init(utilizationFraction: 0.19, resetsAt: Date(timeIntervalSince1970: 50_000)),
+            fetchedAt: Date(timeIntervalSince1970: 9_000)
+        ))
+        try await connector.ingest(ClaudeCodeStatusEvent(
+            sessionID: "idle", sevenDay: ClaudeCodeRateLimitWindow(usedPercentage: 5, resetsAt: 50_000), sentAt: 9_020_000
+        ))
+
+        let windows = try await connector.snapshot().usageWindows
+        let weekly = try XCTUnwrap(windows.first { $0.id == "claude-7d" })
+        XCTAssertEqual(weekly.usedFraction, 0.19, accuracy: 0.0001)
+    }
+
     /// The other half: a session whose limits actually move is still the
     /// freshest reading, and wins as before.
     func testASessionWhoseLimitsChangeStillWins() async throws {
