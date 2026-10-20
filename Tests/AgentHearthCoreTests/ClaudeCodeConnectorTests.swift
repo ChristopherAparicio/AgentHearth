@@ -405,6 +405,89 @@ final class ClaudeCodeConnectorTests: XCTestCase {
 
     /// Per-model weekly limits from the account endpoint become extra windows
     /// after the two global ones, with a stable id the menu bar can pin.
+    /// The bug as it was seen: an idle terminal session's status line kept
+    /// re-sending the 5 % it had seen at launch, every 30 s, each time stamped
+    /// as new — so it outranked every fresh account reading, and the card sat
+    /// at 5 % while the week had reached 18 %. A repeat is not a measurement.
+    func testAnIdleSessionRepeatingItsLimitsDoesNotOutrankAFresherAccountReading() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let connector = ClaudeCodeConnector(
+            projectsURL: root,
+            planUsageHistoryURL: root.appending(path: "missing.json"),
+            now: { Date(timeIntervalSince1970: 10_000) }
+        )
+        let frozen = ClaudeCodeRateLimitWindow(usedPercentage: 5, resetsAt: 50_000)
+        // Launched at t=1000 s, then idle: the same figures, re-sent later.
+        for sentAt in [1_000_000, 4_000_000, 9_000_000] as [Int64] {
+            try await connector.ingest(ClaudeCodeStatusEvent(sessionID: "idle", sevenDay: frozen, sentAt: sentAt))
+        }
+        await connector.ingestAccountUsage(AccountUsage(
+            fiveHour: nil,
+            sevenDay: .init(utilizationFraction: 0.18, resetsAt: Date(timeIntervalSince1970: 50_000)),
+            fetchedAt: Date(timeIntervalSince1970: 8_000)
+        ))
+
+        let windows = try await connector.snapshot().usageWindows
+        let weekly = try XCTUnwrap(windows.first { $0.id == "claude-7d" })
+        XCTAssertEqual(weekly.usedFraction, 0.18, accuracy: 0.0001)
+    }
+
+    /// The other half: a session whose limits actually move is still the
+    /// freshest reading, and wins as before.
+    func testASessionWhoseLimitsChangeStillWins() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let connector = ClaudeCodeConnector(
+            projectsURL: root,
+            planUsageHistoryURL: root.appending(path: "missing.json"),
+            now: { Date(timeIntervalSince1970: 10_000) }
+        )
+        try await connector.ingest(ClaudeCodeStatusEvent(
+            sessionID: "busy", sevenDay: ClaudeCodeRateLimitWindow(usedPercentage: 17, resetsAt: 50_000), sentAt: 1_000_000
+        ))
+        try await connector.ingest(ClaudeCodeStatusEvent(
+            sessionID: "busy", sevenDay: ClaudeCodeRateLimitWindow(usedPercentage: 19, resetsAt: 50_000), sentAt: 9_000_000
+        ))
+        await connector.ingestAccountUsage(AccountUsage(
+            fiveHour: nil,
+            sevenDay: .init(utilizationFraction: 0.18, resetsAt: Date(timeIntervalSince1970: 50_000)),
+            fetchedAt: Date(timeIntervalSince1970: 8_000)
+        ))
+
+        let windows = try await connector.snapshot().usageWindows
+        let weekly = try XCTUnwrap(windows.first { $0.id == "claude-7d" })
+        XCTAssertEqual(weekly.usedFraction, 0.19, accuracy: 0.0001)
+    }
+
+    /// A session still relaying the same figures must not be pruned and then
+    /// taken back as fresh: past the relevance window the reading is dropped
+    /// once, and its repeats do not resurrect it as new.
+    func testARepeatAfterTheRelevanceWindowIsNotTakenBackAsFresh() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let clock = StatusClock(Date(timeIntervalSince1970: 1_000))
+        let connector = ClaudeCodeConnector(
+            projectsURL: root,
+            planUsageHistoryURL: root.appending(path: "missing.json"),
+            relevantAge: 100,
+            now: { clock.now }
+        )
+        let frozen = ClaudeCodeRateLimitWindow(usedPercentage: 5, resetsAt: 50_000)
+        try await connector.ingest(ClaudeCodeStatusEvent(sessionID: "idle", sevenDay: frozen, sentAt: 1_000_000))
+        clock.now = Date(timeIntervalSince1970: 1_500)
+        try await connector.ingest(ClaudeCodeStatusEvent(sessionID: "idle", sevenDay: frozen, sentAt: 1_500_000))
+        await connector.ingestAccountUsage(AccountUsage(
+            fiveHour: nil,
+            sevenDay: .init(utilizationFraction: 0.18, resetsAt: Date(timeIntervalSince1970: 50_000)),
+            fetchedAt: Date(timeIntervalSince1970: 1_450)
+        ))
+
+        let windows = try await connector.snapshot().usageWindows
+        let weekly = try XCTUnwrap(windows.first { $0.id == "claude-7d" })
+        XCTAssertEqual(weekly.usedFraction, 0.18, accuracy: 0.0001)
+    }
+
     func testScopedWeeklyLimitsFollowTheGlobalWindows() async throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -547,4 +630,9 @@ final class ClaudeCodeConnectorTests: XCTestCase {
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
     }
+}
+
+private final class StatusClock: @unchecked Sendable {
+    var now: Date
+    init(_ now: Date) { self.now = now }
 }
