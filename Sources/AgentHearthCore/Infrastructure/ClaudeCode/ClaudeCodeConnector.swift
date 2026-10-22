@@ -25,6 +25,24 @@ public actor ClaudeCodeConnector: ProviderConnector, AccountUsageIngesting {
     // These readings keep the `sentAt` of the payload that carried them, so a
     // retained one still ages honestly against the other sources.
     private var usageStatusBySession: [String: ClaudeCodeStatusEvent] = [:]
+    /// When each session last relayed limits, kept apart from the retained
+    /// reading's own date. The status line re-sends a session's last-known
+    /// limits on every refresh — every 30 s, for as long as the terminal stays
+    /// open — even when the session has made no request in a day, stamped
+    /// with the time of sending. An idle session's figures therefore arrived
+    /// looking brand new forever and outranked the account endpoint: a card
+    /// sat at 5 % for a week that had reached 18 %. Identical limits now keep
+    /// the date they first arrived, so a frozen reading ages honestly; this
+    /// map is what pruning goes by, so a session still relaying the same
+    /// figures is not dropped and then taken back as fresh.
+    private var lastLimitsRelayBySession: [String: Int64] = [:]
+    /// When each session's relayed limits were last seen to change. Only a
+    /// change proves a measurement: the first figures a session relays may be
+    /// days old — an idle session repeats what it saw at launch — and after a
+    /// relaunch there is nothing to tell the two apart. A session with no
+    /// observed change is a fallback for when no account reading is at hand,
+    /// never a reason to override one.
+    private var limitsChangedAtBySession: [String: Int64] = [:]
 
     // Transcripts are append-only history: a file whose modification date and
     // size are unchanged decodes to the same summary, so polling reuses it
@@ -96,12 +114,23 @@ public actor ClaudeCodeConnector: ProviderConnector, AccountUsageIngesting {
         guard !event.sessionID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw ClaudeCodeHookEventError.invalidSession
         }
-        if event.fiveHour != nil || event.sevenDay != nil,
-           usageStatusBySession[event.sessionID].map({ $0.sentAt < event.sentAt }) ?? true {
+        if event.fiveHour != nil || event.sevenDay != nil {
+            lastLimitsRelayBySession[event.sessionID] = max(
+                lastLimitsRelayBySession[event.sessionID] ?? .min,
+                event.sentAt
+            )
+            let retained = usageStatusBySession[event.sessionID]
+            let repeatsRetained = retained.map {
+                $0.fiveHour == event.fiveHour && $0.sevenDay == event.sevenDay
+            } ?? false
             // Judged against the retained reading, not the latest event: a
             // limits-bearing payload delayed behind a plain one is still newer
-            // than what is being held, and is the better reading to keep.
-            usageStatusBySession[event.sessionID] = event
+            // than what is being held, and is the better reading to keep. A
+            // repeat of the retained figures is not a new measurement.
+            if !repeatsRetained, retained.map({ $0.sentAt < event.sentAt }) ?? true {
+                usageStatusBySession[event.sessionID] = event
+                if retained != nil { limitsChangedAtBySession[event.sessionID] = event.sentAt }
+            }
         }
         if let existing = statusEventsBySession[event.sessionID], existing.sentAt > event.sentAt { return }
         statusEventsBySession[event.sessionID] = event
@@ -136,9 +165,7 @@ public actor ClaudeCodeConnector: ProviderConnector, AccountUsageIngesting {
         let latestStatus = sourceMode.usesRealtimeData
             ? statusEventsBySession.values.max { $0.sentAt < $1.sentAt }
             : nil
-        let latestUsageStatus = sourceMode.usesRealtimeData
-            ? usageStatusBySession.values.max { $0.sentAt < $1.sentAt }
-            : nil
+        let latestUsageStatus = sourceMode.usesRealtimeData ? weighableRelayedUsage() : nil
         let hasLocalData = sourceMode.usesLocalData && fileManager.fileExists(atPath: projectsURL.path)
         let hasRealtimeData = sourceMode.usesRealtimeData
             && (!hookEventsBySession.isEmpty || latestStatus != nil)
@@ -257,6 +284,18 @@ public actor ClaudeCodeConnector: ProviderConnector, AccountUsageIngesting {
     /// live 5h/7d percentages for a week, reading as current. The poller
     /// refreshes about every two hours, so anything older than three has
     /// missed at least one round and is dropped.
+    /// The relayed reading worth weighing against the other sources: the
+    /// newest from a session whose limits have been seen to change, or, when
+    /// no account reading is at hand, the newest of any. A retained reading is
+    /// replaced exactly when its limits change, so its date is that change.
+    private func weighableRelayedUsage() -> ClaudeCodeStatusEvent? {
+        let accountReadingAtHand = freshAccountUsage() != nil
+        return usageStatusBySession
+            .filter { !accountReadingAtHand || limitsChangedAtBySession[$0.key] != nil }
+            .values
+            .max { $0.sentAt < $1.sentAt }
+    }
+
     private func freshAccountUsage() -> AccountUsage? {
         guard let accountUsage,
               accountUsage.fetchedAt >= now().addingTimeInterval(-accountUsageRelevantAge),
@@ -569,6 +608,10 @@ public actor ClaudeCodeConnector: ProviderConnector, AccountUsageIngesting {
     private func pruneStatusEvents() {
         let cutoffMilliseconds = Int64(now().addingTimeInterval(-relevantAge).timeIntervalSince1970 * 1_000)
         statusEventsBySession = statusEventsBySession.filter { $0.value.sentAt >= cutoffMilliseconds }
-        usageStatusBySession = usageStatusBySession.filter { $0.value.sentAt >= cutoffMilliseconds }
+        usageStatusBySession = usageStatusBySession.filter {
+            (lastLimitsRelayBySession[$0.key] ?? $0.value.sentAt) >= cutoffMilliseconds
+        }
+        lastLimitsRelayBySession = lastLimitsRelayBySession.filter { $0.value >= cutoffMilliseconds }
+        limitsChangedAtBySession = limitsChangedAtBySession.filter { usageStatusBySession[$0.key] != nil }
     }
 }

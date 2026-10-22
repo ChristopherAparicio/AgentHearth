@@ -49,6 +49,18 @@ final class ClaudeCLIAuthStatusTests: XCTestCase {
         XCTAssertLessThan(Date().timeIntervalSince(started), 5)
     }
 
+    /// The pipe trap, made deterministic: the CLI answers and exits, but leaves
+    /// a background process holding its stdout. A pipe would not reach EOF
+    /// until that process died — thirty seconds here — however promptly the
+    /// CLI itself had answered. The answer must not wait on it.
+    func testALingeringChildHoldingStdoutDoesNotDelayTheAnswer() async throws {
+        let cli = try fakeCLI(#"sleep 30 & echo '{"loggedIn": true}'; exit 0"#)
+        let started = Date()
+        let verdict = await ClaudeCLIAuthStatus.isSignedIn(executable: cli, timeout: 10)
+        XCTAssertEqual(verdict, true)
+        XCTAssertLessThan(Date().timeIntervalSince(started), 5)
+    }
+
     func testNoCLIMeansNoVerdict() async {
         let verdict = await ClaudeCLIAuthStatus.isSignedIn(executable: nil)
         XCTAssertNil(verdict)
