@@ -190,9 +190,99 @@ public actor HistoryStore {
         )
     }
 
+    /// What a point of each usage window costs, calibrated on the recorded
+    /// history of the last `days` (see ``QuotaRateCalibrator``).
+    ///
+    /// Only per-request records take part, and only from when that recording
+    /// began. Rows recorded the older way — one per finished turn — miss every
+    /// request but the last of a turn, and the requests written when recording
+    /// began reach back only as far as each transcript was read; either would
+    /// make a point look several times cheaper than it is.
+    /// Scoped windows (a per-model weekly limit) are left out: they move with
+    /// one model's tokens only, and the spends here are every model's.
+    public func quotaRates(days: Int = 7, now: Date = .now) -> [QuotaRateEstimate] {
+        guard let database = openDatabase(),
+              let recordingStart = requestRecordingStart(database: database)
+        else { return [] }
+        let start = max(recordingStart, now.addingTimeInterval(-TimeInterval(max(1, days)) * 86_400))
+        let timelines = loadTimelines(database: database, start: start, end: now, providerID: nil)
+            .filter { !$0.windowID.hasPrefix("claude-7d-") }
+        // One reading series per window: the host that watched it most closely.
+        var best: [String: UsageTimeline] = [:]
+        for timeline in timelines {
+            let key = "\(timeline.providerID.rawValue):\(timeline.windowID)"
+            if timeline.points.count > (best[key]?.points.count ?? 0) { best[key] = timeline }
+        }
+        var spendsByProvider: [AgentProviderID: [TokenSpend]] = [:]
+        return best.values
+            .sorted { ($0.providerID.rawValue, $0.windowID) < ($1.providerID.rawValue, $1.windowID) }
+            .compactMap { timeline in
+                let spends = spendsByProvider[timeline.providerID] ?? loadRequestSpends(
+                    database: database, providerID: timeline.providerID, start: start, end: now
+                )
+                spendsByProvider[timeline.providerID] = spends
+                return QuotaRateCalibrator.estimate(timeline: timeline, spends: spends)
+            }
+    }
+
+    /// When per-request recording began, as the newest request of the first
+    /// pass that wrote any. That first pass also writes older requests — the
+    /// ones still within the part of each transcript that is read — so the
+    /// days before it are only partly recorded. Only what follows is complete.
+    private func markRequestRecordingStart(database: OpaquePointer, at date: Date) {
+        var statement: OpaquePointer?
+        let sql = "INSERT OR IGNORE INTO history_meta(key,value) VALUES('request_recording_since_ms',?)"
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK, let statement else { return }
+        defer { sqlite3_finalize(statement) }
+        sqlite3_bind_int64(statement, 1, milliseconds(date))
+        sqlite3_step(statement)
+    }
+
+    private func requestRecordingStart(database: OpaquePointer) -> Date? {
+        var statement: OpaquePointer?
+        let sql = "SELECT value FROM history_meta WHERE key='request_recording_since_ms'"
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK, let statement,
+              sqlite3_step(statement) == SQLITE_ROW
+        else { sqlite3_finalize(statement); return nil }
+        defer { sqlite3_finalize(statement) }
+        return Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(statement, 0)) / 1_000)
+    }
+
+    private func loadRequestSpends(
+        database: OpaquePointer,
+        providerID: AgentProviderID,
+        start: Date,
+        end: Date
+    ) -> [TokenSpend] {
+        let sql = """
+        SELECT occurred_at_ms,model,input_tokens,cached_input_tokens,output_tokens FROM cache_events
+        WHERE provider=? AND occurred_at_ms>=? AND occurred_at_ms<? AND external_id LIKE 'req:%'
+        ORDER BY occurred_at_ms
+        """
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK, let statement else { return [] }
+        defer { sqlite3_finalize(statement) }
+        bind(providerID.rawValue, to: statement, at: 1)
+        sqlite3_bind_int64(statement, 2, milliseconds(start))
+        sqlite3_bind_int64(statement, 3, milliseconds(end))
+        var spends: [TokenSpend] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            let input = Int(sqlite3_column_int64(statement, 2))
+            let cached = Int(sqlite3_column_int64(statement, 3))
+            spends.append(TokenSpend(
+                occurredAt: Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(statement, 0)) / 1_000),
+                model: text(statement, 1),
+                uncachedInput: max(0, input - cached),
+                cacheRead: max(0, cached),
+                output: max(0, Int(sqlite3_column_int64(statement, 4)))
+            ))
+        }
+        return spends
+    }
+
     public func clear() {
         guard let database = openDatabase() else { return }
-        sqlite3_exec(database, "DELETE FROM cache_events; DELETE FROM usage_samples; VACUUM;", nil, nil, nil)
+        sqlite3_exec(database, "DELETE FROM cache_events; DELETE FROM usage_samples; DELETE FROM history_meta; VACUUM;", nil, nil, nil)
         recordedRequests = [:]
     }
 
@@ -237,6 +327,7 @@ public actor HistoryStore {
           PRIMARY KEY(provider, window_id, host_id, measured_at_ms)
         );
         CREATE INDEX IF NOT EXISTS usage_samples_time ON usage_samples(measured_at_ms);
+        CREATE TABLE IF NOT EXISTS history_meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL);
         """, nil, nil, nil)
         if version >= 2, version < 3 {
             sqlite3_exec(
@@ -335,6 +426,9 @@ public actor HistoryStore {
         // Rows recorded before per-request history held each turn's last
         // request, stamped at or after it. From the first request in view on,
         // the rows above cover those turns; earlier ones are all there is.
+        if wrote, let newest = session.requests.map(\.occurredAt).max() {
+            markRequestRecordingStart(database: database, at: newest)
+        }
         guard wrote, let first = session.requests.map(\.occurredAt).min() else { return }
         var statement: OpaquePointer?
         let sql = "DELETE FROM cache_events WHERE session_key=? AND occurred_at_ms>=? AND external_id NOT LIKE 'req:%'"
