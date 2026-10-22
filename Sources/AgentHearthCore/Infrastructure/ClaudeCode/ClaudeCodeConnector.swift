@@ -402,7 +402,8 @@ public actor ClaudeCodeConnector: ProviderConnector, AccountUsageIngesting {
                 providerID: providerID,
                 sessionID: sessionID,
                 workingDirectory: directory
-            )
+            ),
+            requests: summary.requests
         )
     }
 
@@ -446,6 +447,7 @@ public actor ClaudeCodeConnector: ProviderConnector, AccountUsageIngesting {
             policy: .init(eligibilityWindow: .previousTurn, tokenTotals: .whenObserved)
         )
         var seenAssistantObservations: Set<String> = []
+        var requestsByKey: [String: TokenUsageRecord] = [:]
 
         for record in records {
             if let value = record.sessionID, !value.isEmpty { sessionID = value }
@@ -467,6 +469,18 @@ public actor ClaudeCodeConnector: ProviderConnector, AccountUsageIngesting {
                 } else {
                     key = "\(timestamp.timeIntervalSince1970)-\(usage.inputTokens ?? 0)-\(usage.cacheReadInputTokens ?? 0)-\(usage.cacheCreationInputTokens ?? 0)"
                 }
+                // A request with several content blocks is written as several
+                // lines sharing its ids; the last one carries the final output
+                // count, so it replaces the earlier ones but keeps their time.
+                requestsByKey[key] = TokenUsageRecord(
+                    id: key,
+                    occurredAt: requestsByKey[key]?.occurredAt ?? timestamp,
+                    model: record.message?.model,
+                    inputTokens: max(0, usage.inputTokens ?? 0),
+                    cachedReadTokens: max(0, usage.cacheReadInputTokens ?? 0),
+                    cacheWriteTokens: max(0, usage.cacheCreationInputTokens ?? 0),
+                    outputTokens: max(0, usage.outputTokens ?? 0)
+                )
                 guard seenAssistantObservations.insert(key).inserted else { continue }
                 let observation = ClaudeUsageObservation(timestamp: timestamp, usage: usage)
                 if latestUsage == nil || timestamp >= latestUsage!.timestamp { latestUsage = observation }
@@ -487,7 +501,8 @@ public actor ClaudeCodeConnector: ProviderConnector, AccountUsageIngesting {
             latestAssistantAt: latestAssistantAt,
             latestTurnEndedAt: latestTurnEndedAt,
             latestUsage: latestUsage,
-            evidence: evidence
+            evidence: evidence,
+            requests: requestsByKey.values.sorted { $0.occurredAt < $1.occurredAt }
         )
     }
 

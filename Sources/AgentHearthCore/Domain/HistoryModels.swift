@@ -108,8 +108,9 @@ public struct ProjectHistorySummary: Identifiable, Equatable, Sendable, CacheAct
 /// key, so the first turn after a switch cannot read the previous model's cache
 /// and reprocesses the conversation at full price.
 ///
-/// Measurements are sampled rather than recorded per turn, so a switch made and
-/// reverted between two samples is not observed. The count is a floor.
+/// Agents whose logs list every request are measured per request; others are
+/// sampled once per turn, so a switch made and reverted between two of their
+/// samples is not observed. The count is a floor.
 public struct ModelSwitchSummary: Identifiable, Equatable, Sendable {
     public let sessionKey: String
     public let sessionTitle: String
