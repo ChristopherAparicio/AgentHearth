@@ -75,6 +75,7 @@
 		55B2435C45C84E9A069CDE12 /* ConnectorGraphBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD5AA333F12ACBCDA6D15BE7 /* ConnectorGraphBuilder.swift */; };
 		5725A24B24A58446D695EC99 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E71C8CB4D8C5C24E97F4A2F /* AppModel.swift */; };
 		58DE4C36DCF1838D05C29993 /* PlanUsageHistoryReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 537662947BA41A7AD83ED515 /* PlanUsageHistoryReader.swift */; };
+		5AE81D940FD7B318EA6E0ECF /* QuotaRates.swift in Sources */ = {isa = PBXBuildFile; fileRef = E88F3FF8E28435941A4CCB9C /* QuotaRates.swift */; };
 		5B885E10FD6ACD72FB9CEF04 /* Codex in Resources */ = {isa = PBXBuildFile; fileRef = 2D9F1CBB867AE5DBE4CE818B /* Codex */; };
 		5B9897BC89055D5951722A70 /* ClaudeAccountUsageFetcherTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6E9FAFDDDEB1D9B002647DA /* ClaudeAccountUsageFetcherTests.swift */; };
 		5C6DC769229AADA337D0E4F1 /* CodexConnectorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A0870E85C01063DB6DDE247 /* CodexConnectorTests.swift */; };
@@ -207,6 +208,7 @@
 		EFB615D04B41394CEF6C35CA /* SnapshotAlertDetectorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 999A0306516A9F4F3BF0D724 /* SnapshotAlertDetectorTests.swift */; };
 		F1E501777D271CA9116B04CD /* MenuBarRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A193BC3EBEF42BEAF127C319 /* MenuBarRootView.swift */; };
 		F2D519F7643745773F82ECA8 /* SmartSleepCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53813BBE81223852E365868C /* SmartSleepCoordinator.swift */; };
+		F2FB9F44DE833212D783231A /* QuotaRateCalibratorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 955232D35C2AE5475B2EA8CF /* QuotaRateCalibratorTests.swift */; };
 		F36002ABBDF012629C3CFA8A /* AgentHearthApplication.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 8187618503BAC6CB9A285D2C /* AgentHearthApplication.framework */; };
 		F372CFFF59FABFC033F8B1CB /* CodexConnector.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB0FCB51C7682856D0ADB6CD /* CodexConnector.swift */; };
 		F5AE4F8F804662DF6A2CC964 /* AgentHearthDomain.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 808ED2C77FE6A0139C3E34C1 /* AgentHearthDomain.framework */; };
@@ -473,6 +475,7 @@
 		8F9D2D834D7C975CC7A1EB7B /* CompactDurationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompactDurationTests.swift; sourceTree = "<group>"; };
 		9472EBC93077C1CFE82AE0DB /* AccountUsage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountUsage.swift; sourceTree = "<group>"; };
 		94E0650A736B3EBCCCDB217A /* MenuBarRootView+Sessions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "MenuBarRootView+Sessions.swift"; sourceTree = "<group>"; };
+		955232D35C2AE5475B2EA8CF /* QuotaRateCalibratorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuotaRateCalibratorTests.swift; sourceTree = "<group>"; };
 		95BA2F6BAF08A07927859441 /* ConsumptionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConsumptionView.swift; sourceTree = "<group>"; };
 		980028184B023E2266213C98 /* ProviderConnector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderConnector.swift; sourceTree = "<group>"; };
 		999A0306516A9F4F3BF0D724 /* SnapshotAlertDetectorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapshotAlertDetectorTests.swift; sourceTree = "<group>"; };
@@ -523,6 +526,7 @@
 		E022486B1968944464D2CB2E /* CacheEvidenceAccumulatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CacheEvidenceAccumulatorTests.swift; sourceTree = "<group>"; };
 		E3F3AD1FEE24CD4CDC39BBA1 /* CompactDuration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompactDuration.swift; sourceTree = "<group>"; };
 		E594B1A399447DBB80B6908C /* AlertModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertModels.swift; sourceTree = "<group>"; };
+		E88F3FF8E28435941A4CCB9C /* QuotaRates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuotaRates.swift; sourceTree = "<group>"; };
 		EBC7C67E5B1333C40F05B8A1 /* AdaptivePollingPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdaptivePollingPolicyTests.swift; sourceTree = "<group>"; };
 		ED0E60B217080980909E1E7D /* RemoteAgentInstaller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteAgentInstaller.swift; sourceTree = "<group>"; };
 		ED9468E24E8A452C5F45E8A7 /* AlertRulesService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertRulesService.swift; sourceTree = "<group>"; };
@@ -769,6 +773,7 @@
 				8821E16A1D5A74E3B3761C7B /* ProviderFormatContractTests.swift */,
 				A74608E473853BBC4C6F9FA6 /* ProviderModelsTests.swift */,
 				F829025FDB860D1FE9F2B9BD /* ProviderMonitorRemoteTests.swift */,
+				955232D35C2AE5475B2EA8CF /* QuotaRateCalibratorTests.swift */,
 				0EF6713470ADC64C77303AD8 /* RemoteAgentClientTests.swift */,
 				B10A95DA7B374A2DF97E6E38 /* SessionDisplayPolicyTests.swift */,
 				1C996EA1726A817CC0C96D69 /* SessionFocusTests.swift */,
@@ -926,6 +931,7 @@
 				F4A2E33B05F0433ABCFD8B2F /* MenuBarLayout.swift */,
 				C6B7AD7C2BA814DDB07D60BF /* ModelFamily.swift */,
 				33C6CC33F20DAE5D6F1688CD /* ProviderModels.swift */,
+				E88F3FF8E28435941A4CCB9C /* QuotaRates.swift */,
 				A2B61613007066E67C99FCA7 /* SessionDisplayPolicy.swift */,
 				5FBE1B680CFD6EC290CE3EFD /* SessionFocus.swift */,
 				126EF5E4A7B91FB53AAA1458 /* SessionOrdering.swift */,
@@ -1163,6 +1169,7 @@
 				B76D11DB8DE646F614071139 /* MenuBarLayout.swift in Sources */,
 				C4F47343DC9B69A9595DFCAC /* ModelFamily.swift in Sources */,
 				1C739628004CD57201B27140 /* ProviderModels.swift in Sources */,
+				5AE81D940FD7B318EA6E0ECF /* QuotaRates.swift in Sources */,
 				1C4144FBD7599E57EB4EEDCA /* SessionDisplayPolicy.swift in Sources */,
 				CADBAD41D12671C93D1D72CB /* SessionFocus.swift in Sources */,
 				8365CE6962ACBC2781E9491C /* SessionOrdering.swift in Sources */,
@@ -1301,6 +1308,7 @@
 				18539B07946C84810565F203 /* ProviderFormatContractTests.swift in Sources */,
 				A3FB0D8AB0156A6E189BF567 /* ProviderModelsTests.swift in Sources */,
 				286471E5C488ACF9617AAC28 /* ProviderMonitorRemoteTests.swift in Sources */,
+				F2FB9F44DE833212D783231A /* QuotaRateCalibratorTests.swift in Sources */,
 				E224D3E54C1A991A6B578F36 /* RemoteAgentClientTests.swift in Sources */,
 				2675D0CB8506A6BE97773D9A /* SSHCommandRunnerTests.swift in Sources */,
 				272244F3DC3C50472CA7AD6D /* SessionDisplayPolicyTests.swift in Sources */,

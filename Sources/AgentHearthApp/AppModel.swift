@@ -224,6 +224,11 @@ final class AppModel {
     }
     var historyDashboard = HistoryDashboardSnapshot.empty
     var consumption = ConsumptionSnapshot.empty
+    /// What a point of each usage window costs, recalibrated at most every ten
+    /// minutes: it reads a week of per-request history, which a 5 s poll has
+    /// no reason to repeat.
+    var quotaRates: [QuotaRateEstimate] = []
+    @ObservationIgnored var quotaRatesComputedAt: Date?
     var consumptionRangeMinutes: Int {
         didSet {
             guard consumptionRangeMinutes != oldValue else { return }
@@ -567,6 +572,7 @@ final class AppModel {
                 )
             }
             if consumptionObservers > 0 {
+                await refreshQuotaRates()
                 consumption = await historyStore.consumption(
                     startsAt: consumptionStart(),
                     endsAt: .now,

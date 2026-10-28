@@ -33,6 +33,7 @@ struct ConsumptionView: View {
                             timelineCard(timeline)
                         }
                     }
+                    quotaRatesCard
                     if !model.inFlightSessions.isEmpty { inFlight }
                     if !snapshot.sessions.isEmpty { ranked }
                     if snapshot.sessions.isEmpty && model.inFlightSessions.isEmpty { noSessions }
@@ -252,6 +253,106 @@ struct ConsumptionView: View {
             }
         }
         .frame(height: 150)
+    }
+
+    // MARK: - Quota rates
+
+    private var quotaRatesCard: some View {
+        GroupBox {
+            if model.quotaRates.isEmpty {
+                Text("Not enough per-request history yet. An estimate appears once a window has risen a few times by 3 points or more while this Mac recorded the tokens — usually within a day or two of use.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 6)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(Array(model.quotaRates.enumerated()), id: \.element.id) { index, rate in
+                        if index > 0 { Divider() }
+                        quotaRateRow(rate).padding(.vertical, 9)
+                    }
+                }
+            }
+        } label: {
+            HStack {
+                Label("What a point costs", systemImage: "scalemass")
+                    .font(.headline)
+                Spacer()
+                if !model.quotaRates.isEmpty {
+                    Button("Copy") { copyQuotaRates() }
+                        .controlSize(.small)
+                        .help("Copy these figures as JSON, to project another workload against them")
+                }
+                HelpButton(text: "Calibrated on the last 7 days: each rise of a window by 3 points or more is set against the tokens recorded meanwhile, priced at the model's API list price. Use the window sees but this Mac does not — claude.ai, another computer, a server — makes a point look cheaper, so the quarter of rises cheapest per point is left out. The figures are best read as: a point costs at least this much.")
+            }
+        }
+    }
+
+    private func quotaRateRow(_ rate: QuotaRateEstimate) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline) {
+                Circle().fill(rate.providerID.tint).frame(width: 8, height: 8)
+                Text("\(rate.providerID.displayName) · \(rate.windowLabel)")
+                    .font(.callout.weight(.semibold))
+                Spacer()
+                Text("1 % ≈ \(dollars(rate.dollarsPerPoint)) API · \(millions(rate.tokensPerPoint)) tokens")
+                    .font(.callout.weight(.semibold).monospacedDigit())
+            }
+            Text("Per 1 M tokens: cache read \(points(rate.pointsPerMillion.cacheRead)) · uncached input \(points(rate.pointsPerMillion.uncachedInput)) · output \(points(rate.pointsPerMillion.output))")
+                .font(.caption.monospacedDigit())
+            Text("\(rate.increases) rises · \(Int(rate.points.rounded())) points · spread \(dollars(rate.dollarsPerPointRange.lowerBound))–\(dollars(rate.dollarsPerPointRange.upperBound)) a point · \(Int((rate.cacheReadShare * 100).rounded())) % cache reads · priced as \(rate.referenceModel)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func dollars(_ value: Double) -> String {
+        value >= 10 ? String(format: "$%.0f", value) : String(format: "$%.2f", value)
+    }
+
+    private func millions(_ value: Double) -> String {
+        value >= 10_000_000 ? String(format: "%.0f M", value / 1e6) : String(format: "%.1f M", value / 1e6)
+    }
+
+    private func points(_ value: Double) -> String {
+        if value >= 0.1 { return String(format: "%.2f %%", value) }
+        if value >= 0.01 { return String(format: "%.3f %%", value) }
+        return String(format: "%.4f %%", value)
+    }
+
+    private func copyQuotaRates() {
+        let iso = ISO8601DateFormatter()
+        let estimates: [[String: Any]] = model.quotaRates.map { rate in
+            [
+                "provider": rate.providerID.rawValue,
+                "window": rate.windowID,
+                "reference_model": rate.referenceModel,
+                "api_dollars_per_point": rate.dollarsPerPoint,
+                "tokens_per_point": rate.tokensPerPoint,
+                "points_per_million_tokens": [
+                    "cache_read": rate.pointsPerMillion.cacheRead,
+                    "uncached_input": rate.pointsPerMillion.uncachedInput,
+                    "output": rate.pointsPerMillion.output,
+                ],
+                "cache_read_share": rate.cacheReadShare,
+                "rises": rate.increases,
+                "points_observed": rate.points,
+                "api_dollars_per_point_p25": rate.dollarsPerPointRange.lowerBound,
+                "api_dollars_per_point_p75": rate.dollarsPerPointRange.upperBound,
+                "calibrated_from": iso.string(from: rate.from),
+                "calibrated_to": iso.string(from: rate.to),
+            ]
+        }
+        let payload: [String: Any] = [
+            "generated_at": iso.string(from: .now),
+            "note": "A point is 1 % of the window. Tokens priced at API list prices. Use outside the monitored machines makes a point look cheaper: read these as lower bounds on the cost of a point.",
+            "estimates": estimates,
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys]),
+              let text = String(data: data, encoding: .utf8)
+        else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
     }
 
     // MARK: - Sessions
