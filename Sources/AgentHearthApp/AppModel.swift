@@ -408,16 +408,22 @@ final class AppModel {
                 + "~/.config/agenthearth/ingress-token (\(error.localizedDescription)). "
                 + "Live hooks and plugins are ignored until this is fixed."
         }
+        // Status-line payloads are left out: they arrive every few seconds
+        // and only carry usage, which can wait for the next poll.
+        let liveEvents = LiveEventRefresher()
         let server = AgentHearthLocalServer(
             token: ingressToken,
             ingestOpenCode: { payload in
                 try await openCodeConnector.ingest(payload)
+                await liveEvents.eventArrived()
             },
             ingestCodex: { event in
                 try await codexConnector.ingest(event)
+                await liveEvents.eventArrived()
             },
             ingestClaudeCode: { event in
                 try await claudeCodeConnector.ingest(event)
+                await liveEvents.eventArrived()
             },
             ingestClaudeCodeStatus: { event in
                 try await claudeCodeConnector.ingest(event)
@@ -464,6 +470,9 @@ final class AppModel {
             bundledClaudeCodeHookURL: bundledClaudeHook,
             bundledRemoteAgentURL: bundledRemoteAgent
         )
+        liveEvents.refresh = { [weak model] in
+            await model?.refresh()
+        }
         notifications.onOpenTarget = { [weak model] target in
             model?.openSession(target)
         }

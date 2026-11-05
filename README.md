@@ -225,7 +225,8 @@ unchanged session does not add rows or inflate totals. Archiving a provider
 session does not erase its AgentHearth analytics; rows expire according to the
 selected retention period, or immediately when **Clear History** is confirmed.
 
-Polling is adaptive: 5 seconds while an agent is working, 10 seconds when an
+Polling is adaptive: 30 seconds while an agent is working (hook events refresh
+the menu at once, without waiting for a poll), 10 seconds when an
 action is required, 20 seconds for visible idle/warm sessions, and 30 seconds
 when no session is visible. Daily/weekly reports and their notification hour
 are configured independently from this live refresh cadence.

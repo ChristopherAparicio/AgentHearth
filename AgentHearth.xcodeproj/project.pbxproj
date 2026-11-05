@@ -152,6 +152,7 @@
 		B0CFA88D66B9FBF5C4DDBAC5 /* SmartSleepControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = 272A622B626F7070D4B1588C /* SmartSleepControl.swift */; };
 		B129282049B3E4D39ABFC7F7 /* AgentHearthDomain.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 808ED2C77FE6A0139C3E34C1 /* AgentHearthDomain.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		B3CC72F5964B8C873C3BFBC6 /* AgentHearthInfrastructure.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 47A596AFEF42904DB55AD2FB /* AgentHearthInfrastructure.framework */; };
+		B69CA7309171CAAC15225EAE /* LiveEventRefresherTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02771C1CAF509758FA57D329 /* LiveEventRefresherTests.swift */; };
 		B76D11DB8DE646F614071139 /* MenuBarLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4A2E33B05F0433ABCFD8B2F /* MenuBarLayout.swift */; };
 		B826630E0434BEB433CC0F09 /* SmartSleepControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = 272A622B626F7070D4B1588C /* SmartSleepControl.swift */; };
 		B890B7A16D54FC32C0A280FE /* CacheHealthTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 041C1273CB7F07EB7BEC1C51 /* CacheHealthTests.swift */; };
@@ -186,6 +187,7 @@
 		D64E67ED2FC85996BA5BA05A /* NotificationAdminService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE70815B3DACA0C2A6C50175 /* NotificationAdminService.swift */; };
 		D8857E85D9EAEA049089998A /* RemoteAgentClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11A65EC01947F750EFC8BD22 /* RemoteAgentClient.swift */; };
 		DA3DCA8B759502BD6FAE6037 /* MenuBarSettingsSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70BC9E87F8084F0209C6F45C /* MenuBarSettingsSection.swift */; };
+		DBD22A5D050F82F2D64ED082 /* LiveEventRefresher.swift in Sources */ = {isa = PBXBuildFile; fileRef = E56C026D671C54007E59762A /* LiveEventRefresher.swift */; };
 		DE1053B4F1BC4B13CB3EE80E /* ProviderPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1AE5B3412C9FBDD112DC3B8E /* ProviderPresentation.swift */; };
 		DE8AFB3482761F4EAD32F89A /* SSHCommandRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77DE8EABC55B2EDF054F0BB1 /* SSHCommandRunner.swift */; };
 		DF46400DD15778DEECCAA726 /* PrioritySessionsSettingsSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 419FB677FA42DD44170CEA94 /* PrioritySessionsSettingsSection.swift */; };
@@ -213,6 +215,7 @@
 		F6257C2B84E90FE2563F1E7C /* HistoryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C31D908DD695331741A7759 /* HistoryStore.swift */; };
 		F720A1288725BF68DF5D633C /* ConnectorSettingsSections.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4683DBAC89B498B519C31AE /* ConnectorSettingsSections.swift */; };
 		F75528C0A317B93E766335A2 /* ClaudeAccountUsageFetcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = B85E31BCD6C1D621758C7F4D /* ClaudeAccountUsageFetcher.swift */; };
+		F9E800F0980728E2BDE9ED8D /* LiveEventRefresher.swift in Sources */ = {isa = PBXBuildFile; fileRef = E56C026D671C54007E59762A /* LiveEventRefresher.swift */; };
 		FA4F8947D1BAF9ED02B5B243 /* CodexRolloutModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66B312F73B7495C667BA00BA /* CodexRolloutModels.swift */; };
 		FB90443EB2C37169EBEA0C1A /* CacheActivityAggregateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B95DA7909DDBDAEB1BD3718B /* CacheActivityAggregateTests.swift */; };
 		FE1568ECBA7142684EDE4B92 /* CodexHookModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78ADC452D8BB0BB457353E49 /* CodexHookModels.swift */; };
@@ -388,6 +391,7 @@
 /* Begin PBXFileReference section */
 		00729F22D7F21BCB5CDCD3C5 /* ConnectorInstallationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectorInstallationService.swift; sourceTree = "<group>"; };
 		008707A767A82ECFDFCB906C /* HistoryDashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryDashboardView.swift; sourceTree = "<group>"; };
+		02771C1CAF509758FA57D329 /* LiveEventRefresherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveEventRefresherTests.swift; sourceTree = "<group>"; };
 		028962C54C19F1F37435AF28 /* MenuBarStatusLabelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarStatusLabelTests.swift; sourceTree = "<group>"; };
 		03758F1DCE909622AF5FB9EA /* ISO8601Instant.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ISO8601Instant.swift; sourceTree = "<group>"; };
 		03F366DEB0B1194055D42744 /* NotificationPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationPolicyTests.swift; sourceTree = "<group>"; };
@@ -522,6 +526,7 @@
 		DF221AB579925A0FE4C1A511 /* MenuBarRootView+SmartSleep.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "MenuBarRootView+SmartSleep.swift"; sourceTree = "<group>"; };
 		E022486B1968944464D2CB2E /* CacheEvidenceAccumulatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CacheEvidenceAccumulatorTests.swift; sourceTree = "<group>"; };
 		E3F3AD1FEE24CD4CDC39BBA1 /* CompactDuration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompactDuration.swift; sourceTree = "<group>"; };
+		E56C026D671C54007E59762A /* LiveEventRefresher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveEventRefresher.swift; sourceTree = "<group>"; };
 		E594B1A399447DBB80B6908C /* AlertModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertModels.swift; sourceTree = "<group>"; };
 		EBC7C67E5B1333C40F05B8A1 /* AdaptivePollingPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdaptivePollingPolicyTests.swift; sourceTree = "<group>"; };
 		ED0E60B217080980909E1E7D /* RemoteAgentInstaller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteAgentInstaller.swift; sourceTree = "<group>"; };
@@ -647,6 +652,7 @@
 				0AF1225C75A7DFA11B224B9C /* ExpiringCacheView.swift */,
 				008707A767A82ECFDFCB906C /* HistoryDashboardView.swift */,
 				778FEFADFE98244F58988216 /* HistoryWindowPresenter.swift */,
+				E56C026D671C54007E59762A /* LiveEventRefresher.swift */,
 				745FE92E26F083E5118E3873 /* MacNotificationCenter.swift */,
 				093DC867B46F8CEB4FE4D364 /* MenuBarDisplay.swift */,
 				0FA42F2D7D5FA157EE649AE6 /* MenuBarLabelView.swift */,
@@ -674,6 +680,7 @@
 			children = (
 				F96AAA81B8FF3D67403AC9B3 /* AccountUsagePollerTests.swift */,
 				096253EE2BBA3540036A5E5F /* AlertRulesServiceTests.swift */,
+				02771C1CAF509758FA57D329 /* LiveEventRefresherTests.swift */,
 				028962C54C19F1F37435AF28 /* MenuBarStatusLabelTests.swift */,
 				3A81BEBCFC421C4A65B81783 /* PreferencesStoreTests.swift */,
 			);
@@ -1203,6 +1210,7 @@
 				9CDCE9B14DE0658E4B50114E /* HistoryDashboardView.swift in Sources */,
 				86AFA488B0C2FE1DE839F2E4 /* HistorySettingsSections.swift in Sources */,
 				C056D0936205BB380AA79E72 /* HistoryWindowPresenter.swift in Sources */,
+				F9E800F0980728E2BDE9ED8D /* LiveEventRefresher.swift in Sources */,
 				61B215A6146F836CB9A91E16 /* MacNotificationCenter.swift in Sources */,
 				C6E18023FBA3C3340C820E6D /* MenuBarDisplay.swift in Sources */,
 				6B66160B8265302089D78967 /* MenuBarLabelView.swift in Sources */,
@@ -1334,6 +1342,8 @@
 				FF5E99BDBE4AFBA4A46692C3 /* HistoryDashboardView.swift in Sources */,
 				BFE04882B4D7199274AC5783 /* HistorySettingsSections.swift in Sources */,
 				07727CFB401D60A4F8FE8F96 /* HistoryWindowPresenter.swift in Sources */,
+				DBD22A5D050F82F2D64ED082 /* LiveEventRefresher.swift in Sources */,
+				B69CA7309171CAAC15225EAE /* LiveEventRefresherTests.swift in Sources */,
 				6EFDAE326CE29F36FDB24BB7 /* MacNotificationCenter.swift in Sources */,
 				943596EEA2DD8477BD835F2A /* MenuBarDisplay.swift in Sources */,
 				6D8C8A5552EB20144E08A3E4 /* MenuBarLabelView.swift in Sources */,
