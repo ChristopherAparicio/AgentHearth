@@ -155,6 +155,14 @@ public enum UsageSampleGranularity {
         lastFraction: Double,
         lastMeasuredAt: Date
     ) -> Bool {
+        // A reading older than the last one recorded is not a newer
+        // measurement. It happens when the freshest source drops out — the
+        // account endpoint while signed out — and the card falls back to the
+        // desktop journal, whose figure can be hours old and far lower.
+        // Stored, it sat in the timeline as a dip and a recovery that never
+        // happened: a fake reset to the cost calibration, a fake drop on the
+        // chart.
+        guard measuredAt > lastMeasuredAt else { return false }
         if abs(fraction - lastFraction) > changeEpsilon { return true }
         return measuredAt.timeIntervalSince(lastMeasuredAt) >= heartbeat
     }
