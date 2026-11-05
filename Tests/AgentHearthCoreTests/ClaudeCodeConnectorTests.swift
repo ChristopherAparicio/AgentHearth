@@ -165,6 +165,35 @@ final class ClaudeCodeConnectorTests: XCTestCase {
         XCTAssertEqual(snapshot.sessions.map(\.id), ["parent"])
     }
 
+    func testBetweenFullScansOnlyListedAndHookReportedTranscriptsAreRead() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let clock = StatusClock(Date(timeIntervalSince1970: 2_000))
+        try writeTranscript(at: root.appending(path: "project/listed.jsonl"), sessionID: "listed", modifiedAt: 1_990)
+        let connector = ClaudeCodeConnector(projectsURL: root, fullScanInterval: 180, now: { clock.now })
+        let first = try await connector.snapshot()
+        XCTAssertEqual(first.sessions.map(\.id), ["listed"])
+
+        let hooked = root.appending(path: "project/hooked.jsonl")
+        try writeTranscript(at: hooked, sessionID: "hooked", modifiedAt: 1_995)
+        try writeTranscript(at: root.appending(path: "project/hookless.jsonl"), sessionID: "hookless", modifiedAt: 1_995)
+        try await connector.ingest(ClaudeCodeHookEvent(
+            eventName: "Stop",
+            sessionID: "hooked",
+            transcriptPath: hooked.path,
+            sentAt: 1_996_000
+        ))
+
+        clock.now = Date(timeIntervalSince1970: 2_005)
+        let betweenScans = try await connector.snapshot()
+        XCTAssertEqual(Set(betweenScans.sessions.map(\.id)), ["listed", "hooked"])
+
+        // A session without hooks waits for the next full scan.
+        clock.now = Date(timeIntervalSince1970: 2_180)
+        let afterFullScan = try await connector.snapshot()
+        XCTAssertEqual(Set(afterFullScan.sessions.map(\.id)), ["listed", "hooked", "hookless"])
+    }
+
     func testChangedTranscriptInvalidatesTheCachedSummary() async throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }

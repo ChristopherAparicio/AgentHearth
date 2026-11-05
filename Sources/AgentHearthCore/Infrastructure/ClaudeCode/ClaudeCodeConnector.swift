@@ -51,6 +51,12 @@ public actor ClaudeCodeConnector: ProviderConnector, AccountUsageIngesting {
     private var summariesByPath: [String: CachedTranscriptSummary] = [:]
     private(set) var transcriptDecodeCount = 0
 
+    // The transcripts the last poll listed, and when the projects tree was
+    // last walked in full. See `recentTranscriptFiles`.
+    private let fullScanInterval: TimeInterval
+    private var lastFullScanAt: Date?
+    private var knownTranscriptPaths: Set<String> = []
+
     // Claude Desktop's usage journal is re-parsed only when it changes, for the
     // same reason transcripts are cached: an unchanged file yields the same
     // sample.
@@ -72,9 +78,11 @@ public actor ClaudeCodeConnector: ProviderConnector, AccountUsageIngesting {
         accountUsageRelevantAge: TimeInterval = 3 * 60 * 60,
         hookFreshness: TimeInterval = 2 * 60 * 60,
         stuckAfter: TimeInterval = 15 * 60,
+        fullScanInterval: TimeInterval = 3 * 60,
         now: @escaping @Sendable () -> Date = Date.init,
         fileManager: FileManager = .default
     ) {
+        self.fullScanInterval = fullScanInterval
         self.projectsURL = projectsURL
         self.planUsageHistoryURL = planUsageHistoryURL
         self.relevantAge = relevantAge
@@ -335,7 +343,39 @@ public actor ClaudeCodeConnector: ProviderConnector, AccountUsageIngesting {
         return sample
     }
 
+    /// Walking the whole projects tree costs thousands of stats, and polls come
+    /// every few seconds while a session works. Between full scans only the
+    /// transcripts already listed and the ones hooks report are looked at; a
+    /// session without hooks is picked up by the next full scan.
     private func recentTranscriptFiles() -> [ClaudeTranscriptCandidate] {
+        let candidates: [ClaudeTranscriptCandidate]
+        if let lastFullScanAt, now() >= lastFullScanAt, now().timeIntervalSince(lastFullScanAt) < fullScanInterval {
+            candidates = knownTranscriptFiles()
+        } else {
+            candidates = scannedTranscriptFiles()
+            lastFullScanAt = now()
+        }
+        let recent = candidates.sorted { $0.modifiedAt > $1.modifiedAt }.prefix(50).map { $0 }
+        knownTranscriptPaths = Set(recent.map(\.url.path))
+        return recent
+    }
+
+    private func knownTranscriptFiles() -> [ClaudeTranscriptCandidate] {
+        // Only transcripts the full scan would have found count, so a hook
+        // cannot surface a file from elsewhere or a subagent's.
+        let root = projectsURL.path.hasSuffix("/") ? projectsURL.path : projectsURL.path + "/"
+        let hookPaths = hookEventsBySession.values.compactMap(\.transcriptPath).filter {
+            $0.hasPrefix(root) && $0.hasSuffix(".jsonl") && !$0.split(separator: "/").contains("subagents")
+        }
+        let cutoff = now().addingTimeInterval(-relevantAge)
+        // A fresh URL per poll: Foundation caches resource values on a URL
+        // instance, which would hide a transcript's growth.
+        return knownTranscriptPaths.union(hookPaths).compactMap {
+            transcriptCandidate(at: URL(fileURLWithPath: $0), cutoff: cutoff)
+        }
+    }
+
+    private func scannedTranscriptFiles() -> [ClaudeTranscriptCandidate] {
         guard let enumerator = fileManager.enumerator(
             at: projectsURL,
             includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey, .isRegularFileKey],
@@ -353,18 +393,23 @@ public actor ClaudeCodeConnector: ProviderConnector, AccountUsageIngesting {
                 enumerator.skipDescendants()
                 continue
             }
-            guard url.pathExtension == "jsonl",
-                  let values = try? url.resourceValues(
-                    forKeys: [.contentModificationDateKey, .fileSizeKey, .isRegularFileKey]
-                  ),
-                  values.isRegularFile == true,
-                  let fileSize = values.fileSize, fileSize > 100,
-                  let modifiedAt = values.contentModificationDate,
-                  modifiedAt >= cutoff
+            guard url.pathExtension == "jsonl", let candidate = transcriptCandidate(at: url, cutoff: cutoff)
             else { continue }
-            candidates.append(ClaudeTranscriptCandidate(url: url, modifiedAt: modifiedAt, fileSize: fileSize))
+            candidates.append(candidate)
         }
-        return candidates.sorted { $0.modifiedAt > $1.modifiedAt }.prefix(50).map { $0 }
+        return candidates
+    }
+
+    private func transcriptCandidate(at url: URL, cutoff: Date) -> ClaudeTranscriptCandidate? {
+        guard let values = try? url.resourceValues(
+                forKeys: [.contentModificationDateKey, .fileSizeKey, .isRegularFileKey]
+              ),
+              values.isRegularFile == true,
+              let fileSize = values.fileSize, fileSize > 100,
+              let modifiedAt = values.contentModificationDate,
+              modifiedAt >= cutoff
+        else { return nil }
+        return ClaudeTranscriptCandidate(url: url, modifiedAt: modifiedAt, fileSize: fileSize)
     }
 
     private func parse(_ candidate: ClaudeTranscriptCandidate) -> AgentSession? {
