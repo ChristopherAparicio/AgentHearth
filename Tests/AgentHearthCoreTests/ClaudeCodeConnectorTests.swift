@@ -149,6 +149,22 @@ final class ClaudeCodeConnectorTests: XCTestCase {
         XCTAssertEqual(second.sessions.first?.cache.cachedReadTokens, 100)
     }
 
+    func testSubagentTranscriptsAreNotListedAsSessions() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try writeTranscript(at: root.appending(path: "project/parent.jsonl"), sessionID: "parent", modifiedAt: 1_999)
+        try writeTranscript(
+            at: root.appending(path: "project/parent/subagents/agent-1.jsonl"),
+            sessionID: "agent-1",
+            modifiedAt: 1_999
+        )
+
+        let connector = ClaudeCodeConnector(projectsURL: root, now: { Date(timeIntervalSince1970: 2_000) })
+        let snapshot = try await connector.snapshot()
+
+        XCTAssertEqual(snapshot.sessions.map(\.id), ["parent"])
+    }
+
     func testChangedTranscriptInvalidatesTheCachedSummary() async throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -655,6 +671,17 @@ final class ClaudeCodeConnectorTests: XCTestCase {
         let url = FileManager.default.temporaryDirectory.appending(path: "AgentHearth-Claude-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
+    }
+
+    private func writeTranscript(at url: URL, sessionID: String, modifiedAt: TimeInterval) throws {
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("""
+        {"type":"assistant","timestamp":"1970-01-01T00:33:19.000Z","sessionId":"\(sessionID)","cwd":"/tmp/AgentHearth","message":{"id":"message-\(sessionID)","model":"claude-sonnet-4-6","usage":{"input_tokens":10,"cache_read_input_tokens":100}}}
+        """.utf8).write(to: url)
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date(timeIntervalSince1970: modifiedAt)],
+            ofItemAtPath: url.path
+        )
     }
 }
 

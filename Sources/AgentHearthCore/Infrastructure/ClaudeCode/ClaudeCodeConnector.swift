@@ -344,10 +344,16 @@ public actor ClaudeCodeConnector: ProviderConnector, AccountUsageIngesting {
 
         let cutoff = now().addingTimeInterval(-relevantAge)
         var candidates: [ClaudeTranscriptCandidate] = []
-        for case let url as URL in enumerator where url.pathExtension == "jsonl" {
+        for case let url as URL in enumerator {
             // Claude stores subagent transcripts below <session>/subagents.
-            // Their cache usage belongs to the parent but they are not top-level sessions.
-            guard !url.pathComponents.contains("subagents"),
+            // Their cache usage belongs to the parent but they are not top-level
+            // sessions. They outnumber the sessions, so the walk does not even
+            // enter those directories.
+            if url.lastPathComponent == "subagents" {
+                enumerator.skipDescendants()
+                continue
+            }
+            guard url.pathExtension == "jsonl",
                   let values = try? url.resourceValues(
                     forKeys: [.contentModificationDateKey, .fileSizeKey, .isRegularFileKey]
                   ),
