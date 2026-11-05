@@ -149,6 +149,51 @@ final class ClaudeCodeConnectorTests: XCTestCase {
         XCTAssertEqual(second.sessions.first?.cache.cachedReadTokens, 100)
     }
 
+    func testSubagentTranscriptsAreNotListedAsSessions() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try writeTranscript(at: root.appending(path: "project/parent.jsonl"), sessionID: "parent", modifiedAt: 1_999)
+        try writeTranscript(
+            at: root.appending(path: "project/parent/subagents/agent-1.jsonl"),
+            sessionID: "agent-1",
+            modifiedAt: 1_999
+        )
+
+        let connector = ClaudeCodeConnector(projectsURL: root, now: { Date(timeIntervalSince1970: 2_000) })
+        let snapshot = try await connector.snapshot()
+
+        XCTAssertEqual(snapshot.sessions.map(\.id), ["parent"])
+    }
+
+    func testBetweenFullScansOnlyListedAndHookReportedTranscriptsAreRead() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let clock = StatusClock(Date(timeIntervalSince1970: 2_000))
+        try writeTranscript(at: root.appending(path: "project/listed.jsonl"), sessionID: "listed", modifiedAt: 1_990)
+        let connector = ClaudeCodeConnector(projectsURL: root, fullScanInterval: 180, now: { clock.now })
+        let first = try await connector.snapshot()
+        XCTAssertEqual(first.sessions.map(\.id), ["listed"])
+
+        let hooked = root.appending(path: "project/hooked.jsonl")
+        try writeTranscript(at: hooked, sessionID: "hooked", modifiedAt: 1_995)
+        try writeTranscript(at: root.appending(path: "project/hookless.jsonl"), sessionID: "hookless", modifiedAt: 1_995)
+        try await connector.ingest(ClaudeCodeHookEvent(
+            eventName: "Stop",
+            sessionID: "hooked",
+            transcriptPath: hooked.path,
+            sentAt: 1_996_000
+        ))
+
+        clock.now = Date(timeIntervalSince1970: 2_005)
+        let betweenScans = try await connector.snapshot()
+        XCTAssertEqual(Set(betweenScans.sessions.map(\.id)), ["listed", "hooked"])
+
+        // A session without hooks waits for the next full scan.
+        clock.now = Date(timeIntervalSince1970: 2_180)
+        let afterFullScan = try await connector.snapshot()
+        XCTAssertEqual(Set(afterFullScan.sessions.map(\.id)), ["listed", "hooked", "hookless"])
+    }
+
     func testChangedTranscriptInvalidatesTheCachedSummary() async throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -655,6 +700,17 @@ final class ClaudeCodeConnectorTests: XCTestCase {
         let url = FileManager.default.temporaryDirectory.appending(path: "AgentHearth-Claude-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
+    }
+
+    private func writeTranscript(at url: URL, sessionID: String, modifiedAt: TimeInterval) throws {
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("""
+        {"type":"assistant","timestamp":"1970-01-01T00:33:19.000Z","sessionId":"\(sessionID)","cwd":"/tmp/AgentHearth","message":{"id":"message-\(sessionID)","model":"claude-sonnet-4-6","usage":{"input_tokens":10,"cache_read_input_tokens":100}}}
+        """.utf8).write(to: url)
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date(timeIntervalSince1970: modifiedAt)],
+            ofItemAtPath: url.path
+        )
     }
 }
 

@@ -21,6 +21,12 @@ public actor CodexConnector: ProviderConnector {
     private var summariesByPath: [String: CachedRolloutSummary] = [:]
     private(set) var rolloutDecodeCount = 0
 
+    // The rollouts the last poll listed, and when the sessions tree was last
+    // walked in full. See `recentRolloutFiles`.
+    private let fullScanInterval: TimeInterval
+    private var lastFullScanAt: Date?
+    private var knownRolloutPaths: Set<String> = []
+
     /// Asks Codex's own service what the account's quota is, when wired.
     /// Rollouts only carry whichever limit Codex happened to be spending at
     /// the time, so they cannot be trusted alone — see
@@ -43,12 +49,14 @@ public actor CodexConnector: ProviderConnector {
         relevantAge: TimeInterval = 7 * 24 * 60 * 60,
         hookFreshness: TimeInterval = 2 * 60 * 60,
         stuckAfter: TimeInterval = 15 * 60,
+        fullScanInterval: TimeInterval = 3 * 60,
         now: @escaping @Sendable () -> Date = Date.init,
         fileManager: FileManager = .default,
         accountUsage: (@Sendable () async -> [UsageWindow]?)? = nil,
         accountUsageTTL: TimeInterval = 5 * 60,
         accountUsageMaxAge: TimeInterval = 60 * 60
     ) {
+        self.fullScanInterval = fullScanInterval
         self.accountUsage = accountUsage
         self.accountUsageTTL = accountUsageTTL
         self.accountUsageMaxAge = accountUsageMaxAge
@@ -118,7 +126,36 @@ public actor CodexConnector: ProviderConnector {
         )
     }
 
+    /// As in `ClaudeCodeConnector`: between full scans only the rollouts
+    /// already listed and the ones hooks report are looked at; a session
+    /// without hooks is picked up by the next full scan.
     private func recentRolloutFiles() -> [FileCandidate] {
+        let candidates: [FileCandidate]
+        if let lastFullScanAt, now() >= lastFullScanAt, now().timeIntervalSince(lastFullScanAt) < fullScanInterval {
+            candidates = knownRolloutFiles()
+        } else {
+            candidates = scannedRolloutFiles()
+            lastFullScanAt = now()
+        }
+        let recent = candidates.sorted { $0.modifiedAt > $1.modifiedAt }.prefix(50).map { $0 }
+        knownRolloutPaths = Set(recent.map(\.url.path))
+        return recent
+    }
+
+    private func knownRolloutFiles() -> [FileCandidate] {
+        let root = sessionsURL.path.hasSuffix("/") ? sessionsURL.path : sessionsURL.path + "/"
+        let hookPaths = hookEventsBySession.values.compactMap(\.transcriptPath).filter {
+            $0.hasPrefix(root) && $0.hasSuffix(".jsonl")
+        }
+        let cutoff = now().addingTimeInterval(-relevantAge)
+        // A fresh URL per poll: Foundation caches resource values on a URL
+        // instance, which would hide a rollout's growth.
+        return knownRolloutPaths.union(hookPaths).compactMap {
+            rolloutCandidate(at: URL(fileURLWithPath: $0), cutoff: cutoff)
+        }
+    }
+
+    private func scannedRolloutFiles() -> [FileCandidate] {
         guard let enumerator = fileManager.enumerator(
             at: sessionsURL,
             includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey, .isRegularFileKey],
@@ -128,16 +165,21 @@ public actor CodexConnector: ProviderConnector {
         let cutoff = now().addingTimeInterval(-relevantAge)
         var candidates: [FileCandidate] = []
         for case let url as URL in enumerator where url.pathExtension == "jsonl" {
-            guard let values = try? url.resourceValues(
-                    forKeys: [.contentModificationDateKey, .fileSizeKey, .isRegularFileKey]
-                  ),
-                  values.isRegularFile == true,
-                  let modifiedAt = values.contentModificationDate,
-                  modifiedAt >= cutoff
-            else { continue }
-            candidates.append(FileCandidate(url: url, modifiedAt: modifiedAt, fileSize: values.fileSize ?? 0))
+            guard let candidate = rolloutCandidate(at: url, cutoff: cutoff) else { continue }
+            candidates.append(candidate)
         }
-        return candidates.sorted { $0.modifiedAt > $1.modifiedAt }.prefix(50).map { $0 }
+        return candidates
+    }
+
+    private func rolloutCandidate(at url: URL, cutoff: Date) -> FileCandidate? {
+        guard let values = try? url.resourceValues(
+                forKeys: [.contentModificationDateKey, .fileSizeKey, .isRegularFileKey]
+              ),
+              values.isRegularFile == true,
+              let modifiedAt = values.contentModificationDate,
+              modifiedAt >= cutoff
+        else { return nil }
+        return FileCandidate(url: url, modifiedAt: modifiedAt, fileSize: values.fileSize ?? 0)
     }
 
     private func parse(_ candidate: FileCandidate) -> ParsedRollout? {

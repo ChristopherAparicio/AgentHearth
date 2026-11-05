@@ -236,7 +236,10 @@ rows are not copied to the Mac; only the normalized allowlisted envelope crosses
 the SSH channel. The remote standard-library collector samples once per minute,
 stores only changed counters for at most 90 days, and exposes paged replay IDs.
 
-Live polling is governed by `AdaptivePollingPolicy`: 5 seconds for working,
+Live polling is governed by `AdaptivePollingPolicy`: 30 seconds for working,
 10 seconds for attention, 20 seconds for visible idle/warm sessions, and 30
-seconds with no sessions. Historical reports have their own daily/weekly
+seconds with no sessions. Hook and plugin events do not wait for it: each burst
+triggers a refresh half a second later (`LiveEventRefresher`). Between full
+walks of the transcript trees, which run every three minutes, a poll only
+re-reads the transcripts it already lists and those hooks report. Historical reports have their own daily/weekly
 schedule and do not change connector polling.
