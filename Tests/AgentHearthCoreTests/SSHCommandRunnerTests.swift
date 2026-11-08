@@ -52,6 +52,23 @@ final class SSHCommandRunnerTests: XCTestCase {
         XCTAssertLessThan(Date.now.timeIntervalSince(started), 10)
     }
 
+    /// The hang CI kept hitting: a process left holding the output's write
+    /// end kept the old pipe drain waiting long after the command had exited,
+    /// past its own timeout. The command's exit must be what ends the call.
+    func testALingeringChildHoldingStdoutDoesNotDelayTheResult() async throws {
+        let started = Date.now
+        let result = try await SystemSSHCommandRunner.execute(
+            executableURL: URL(fileURLWithPath: "/bin/sh"),
+            arguments: ["-c", "sleep 30 & echo ok"],
+            standardInput: nil,
+            timeout: 10
+        )
+        XCTAssertFalse(result.timedOut)
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertEqual(String(data: result.standardOutput, encoding: .utf8), "ok\n")
+        XCTAssertLessThan(Date.now.timeIntervalSince(started), 5)
+    }
+
     func testFastCommandIsNotFlaggedAsTimedOut() async throws {
         let result = try await SystemSSHCommandRunner.execute(
             executableURL: URL(fileURLWithPath: "/bin/echo"),

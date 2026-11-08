@@ -14,14 +14,11 @@ enum ClaudeCLIAuthStatus {
     /// be had: no CLI installed, no reply in time, or output it cannot parse.
     /// Callers fall back to their own reading of the stores on nil.
     ///
-    /// No pipes, on purpose. This first went through
-    /// ``SystemSSHCommandRunner/execute``, whose drain still hangs now and then
-    /// past its own timeout — CI caught this very check stuck for over two
-    /// minutes against a five-second bound. Here a hang would freeze the
-    /// account-usage fetch until the app is relaunched, silently. The answer is
-    /// a few lines of JSON, so the CLI writes it to a file, the process is
-    /// polled without blocking a thread, and the deadline is enforced by this
-    /// loop alone: nothing in it can wait past `timeout`.
+    /// No pipes, on purpose: a pipe's EOF can be held back by any process
+    /// that inherited its write end, and here a hang would freeze the
+    /// account-usage fetch until the app is relaunched, silently. The CLI
+    /// writes its few lines of JSON to a file, the process is polled without
+    /// blocking a thread, and the deadline is enforced by this loop alone.
     static func isSignedIn(
         executable: URL? = defaultExecutable(),
         timeout: TimeInterval = 5

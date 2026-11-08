@@ -18,48 +18,6 @@ public struct SSHCommandResult: Sendable {
     }
 }
 
-/// Terminates a child process once `timeout` elapses, unless `finish()` is
-/// called first. Thread-safe: the timer fires on a global queue while the
-/// owner awaits the pipes.
-private final class ProcessWatchdog: @unchecked Sendable {
-    private let lock = NSLock()
-    private var fired = false
-    private var finished = false
-
-    /// On a thread of its own, for the same reason the drain is: an
-    /// `asyncAfter` on the shared pool is delayed as long as the pool is
-    /// saturated, and this timer is the only thing that ends a command that has
-    /// outstayed its welcome. Parked there it could not fire, the child was
-    /// never killed, and the reads waiting on its exit never returned — the
-    /// timer starved exactly when the machine was busy enough to need it.
-    init(process: Process, timeout: TimeInterval?) {
-        guard let timeout, timeout > 0 else { return }
-        Thread.detachNewThread { [weak self, weak process] in
-            Thread.sleep(forTimeInterval: timeout)
-            guard let self, let process else { return }
-            lock.lock()
-            let shouldTerminate = !finished && process.isRunning
-            if shouldTerminate { fired = true }
-            lock.unlock()
-            if shouldTerminate { process.terminate() }
-        }
-    }
-
-    /// Cancels the pending timer and reports whether the watchdog killed the
-    /// process. A child that exited on its own a hair before the timer ran is
-    /// not classified as timed out: the kill shows up either as a signal exit
-    /// or, for OpenSSH — which traps SIGTERM and exits 255 after logging
-    /// "Killed by signal 15." — as that specific status.
-    func finish(_ process: Process) -> Bool {
-        lock.lock()
-        finished = true
-        let killed = fired
-        lock.unlock()
-        return killed
-            && (process.terminationReason == .uncaughtSignal || process.terminationStatus == 255)
-    }
-}
-
 public protocol SSHCommandRunning: Sendable {
     func run(
         destination: String,
@@ -135,96 +93,94 @@ public actor SystemSSHCommandRunner: SSHCommandRunning {
         return result
     }
 
-    /// Launches a process, feeds optional stdin, and drains stdout/stderr
-    /// concurrently before awaiting exit — the deadlock-free core shared by the
-    /// SSH path and exercised directly by tests with large outputs. When
-    /// `timeout` elapses first, the child is terminated and the result is
-    /// flagged `timedOut`.
-    /// `timeout` defaults to the standard bound rather than to none. A drain
-    /// that never reaches EOF has no other way to end, and the cost of getting
-    /// that wrong is not a slow call but a wedged one: a test run that holds a
-    /// CI runner until the six-hour ceiling, a refresh cycle that never
-    /// completes. Pass an explicit value to widen it; there is no way to ask
-    /// for no bound at all, deliberately.
+    /// Launches a process with optional stdin and returns its output, exit
+    /// status, and whether `timeout` ended it — never later than `timeout`
+    /// plus a short grace for the kill to land.
+    ///
+    /// No pipes, on purpose. The drain this replaced waited for EOF on
+    /// stdout/stderr, and EOF only comes once *every* copy of the write end is
+    /// closed: a grandchild left behind (ssh's ControlMaster, a backgrounded
+    /// job) or any other process that inherited the descriptor kept it open
+    /// after the command itself had exited, and the timeout — which only
+    /// signals the command — could not end that wait. CI caught it more than
+    /// once: `/bin/echo ok` under a five-second bound stuck past two minutes.
+    /// Output goes to temporary files instead, so nothing but the child's own
+    /// exit is waited on, and the deadline is enforced by the polling loop.
+    /// Files also have no buffer to fill, so large outputs cannot deadlock.
+    /// `timeout` defaults to the standard bound; there is deliberately no way
+    /// to ask for none.
     static func execute(
         executableURL: URL,
         arguments: [String],
         standardInput: Data?,
         timeout: TimeInterval = SystemSSHCommandRunner.defaultCommandTimeout
     ) async throws -> SSHCommandResult {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "agenthearth-exec-\(UUID().uuidString)")
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        } catch {
+            throw SSHCommandError.launchFailed(error.localizedDescription)
+        }
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let outputURL = directory.appending(path: "stdout")
+        let errorURL = directory.appending(path: "stderr")
+        let inputURL = directory.appending(path: "stdin")
+
         let process = Process()
-        let outputPipe = Pipe()
-        let errorPipe = Pipe()
-        let inputPipe = Pipe()
         process.executableURL = executableURL
         process.arguments = arguments
-        process.standardOutput = outputPipe
-        process.standardError = errorPipe
-        process.standardInput = inputPipe
-
+        var handles: [FileHandle] = []
+        defer { for handle in handles { try? handle.close() } }
         do {
+            try (standardInput ?? Data()).write(to: inputURL)
+            for url in [outputURL, errorURL] { try Data().write(to: url) }
+            let input = try FileHandle(forReadingFrom: inputURL)
+            let output = try FileHandle(forWritingTo: outputURL)
+            let error = try FileHandle(forWritingTo: errorURL)
+            handles = [input, output, error]
+            process.standardInput = input
+            process.standardOutput = output
+            process.standardError = error
             try process.run()
         } catch {
             throw SSHCommandError.launchFailed(error.localizedDescription)
         }
+        // The child holds its own descriptors; ours are no longer needed.
+        for handle in handles { try? handle.close() }
+        handles = []
 
-        // The child has its own descriptors for these now, so drop the
-        // parent's copies. A read reaches EOF only once *every* write end is
-        // closed, and holding these open means the drain below can outlive the
-        // child that was supposed to end it: the command finishes, nothing
-        // more is ever written, and readToEnd sits there. With no timeout —
-        // the default outside the SSH path — that wait has no end at all.
-        try? outputPipe.fileHandleForWriting.close()
-        try? errorPipe.fileHandleForWriting.close()
-
-        if let standardInput {
-            try? inputPipe.fileHandleForWriting.write(contentsOf: standardInput)
+        let deadline = Date().addingTimeInterval(timeout)
+        var timedOut = false
+        var killAt: Date?
+        while process.isRunning {
+            let now = Date()
+            // A cancelled caller ends the command too: Task.sleep returns at
+            // once when cancelled, so waiting on would only spin.
+            if !timedOut, now >= deadline || Task.isCancelled {
+                timedOut = true
+                process.terminate()
+                killAt = now.addingTimeInterval(2)
+            } else if let due = killAt, now >= due {
+                // SIGTERM was ignored; this one cannot be.
+                kill(process.processIdentifier, SIGKILL)
+                killAt = nil
+            }
+            try? await Task.sleep(for: .milliseconds(20))
         }
-        try? inputPipe.fileHandleForWriting.close()
 
-        let watchdog = ProcessWatchdog(process: process, timeout: timeout)
-
-        // Drain both pipes concurrently BEFORE waiting for exit. Reading after
-        // waitUntilExit() deadlocks whenever the command writes more than the OS
-        // pipe buffer (~64 KB): the child blocks on write() while the parent
-        // blocks on wait(). Awaiting the reads also frees the concurrency pool
-        // instead of parking a cooperative thread — each read completes at EOF,
-        // which the child reaches when it exits (or is killed by the watchdog),
-        // and which is reachable at all only because the parent closed its own
-        // write ends above.
-        async let outputData = readToEnd(outputPipe.fileHandleForReading)
-        async let errorData = readToEnd(errorPipe.fileHandleForReading)
-        let output = await outputData
-        let errorText = String(data: await errorData, encoding: .utf8)?
+        let errorText = String(data: (try? Data(contentsOf: errorURL)) ?? Data(), encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-
-        process.waitUntilExit() // returns immediately: both pipes already hit EOF
-        let timedOut = watchdog.finish(process)
         return SSHCommandResult(
-            standardOutput: output,
+            standardOutput: (try? Data(contentsOf: outputURL)) ?? Data(),
             standardError: errorText,
             exitCode: process.terminationStatus,
+            // A child that exited on its own a hair before the deadline is not
+            // timed out: the kill shows as a signal exit or, for OpenSSH —
+            // which traps SIGTERM and exits 255 — as that status.
             timedOut: timedOut
+                && (process.terminationReason == .uncaughtSignal || process.terminationStatus == 255)
         )
-    }
-
-    /// Reads a handle to EOF on a thread of its own so the blocking read parks
-    /// neither a Swift-concurrency cooperative thread nor a shared dispatch one.
-    ///
-    /// The dedicated thread is the point. Parked on `DispatchQueue.global`,
-    /// two of these hold pool threads until EOF — and the watchdog that
-    /// delivers EOF, by killing a child that has outstayed its timeout, is
-    /// itself an `asyncAfter` on that same pool. With no thread to spare the
-    /// timer never runs, the child is never killed, the reads never end: the
-    /// drain parks on the pool it depends on to rescue it. Rare when one
-    /// command runs alone, reliable under a loaded test suite.
-    private static func readToEnd(_ handle: FileHandle) async -> Data {
-        await withCheckedContinuation { continuation in
-            Thread.detachNewThread {
-                let data = (try? handle.readToEnd()) ?? Data()
-                continuation.resume(returning: data)
-            }
-        }
     }
 
     public static func isValid(_ destination: String) -> Bool {
