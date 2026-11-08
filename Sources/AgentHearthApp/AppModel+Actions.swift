@@ -193,7 +193,15 @@ extension AppModel {
             ?? now.addingTimeInterval(-TimeInterval(max(1, consumptionRangeMinutes) * 60))
     }
 
+    func refreshQuotaRates() async {
+        guard historyEnabled else { return }
+        if let last = quotaRatesComputedAt, Date.now.timeIntervalSince(last) < 600 { return }
+        quotaRatesComputedAt = .now
+        quotaRates = await historyStore.quotaRates()
+    }
+
     func refreshConsumption() async {
+        await refreshQuotaRates()
         consumption = await historyStore.consumption(
             startsAt: consumptionStart(),
             endsAt: consumptionSelection?.upperBound ?? .now,
