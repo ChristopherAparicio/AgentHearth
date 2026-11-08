@@ -198,6 +198,9 @@ struct ProviderCardView: View {
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
                 .background(.quaternary.opacity(0.8), in: Capsule())
+                .help(content == .prioritySessions
+                    ? "Priority sessions shown in the current view"
+                    : "Sessions shown include recent sessions, even when they are not working")
 
             if showsChevron {
                 Image(systemName: "chevron.right")
@@ -555,7 +558,7 @@ struct ProviderCardView: View {
         if snapshot.sessions.contains(where: { $0.status.requiresAttention }) {
             return "Needs attention"
         }
-        return "Connected"
+        return snapshot.sessions.isEmpty ? "Connected" : "No sessions working"
     }
 
     private var priorityCountLabel: String {
@@ -565,7 +568,7 @@ struct ProviderCardView: View {
 
     private var sessionCountLabel: String {
         let count = snapshot.sessions.count
-        return count == 1 ? "1 session" : "\(count) sessions"
+        return count == 1 ? "1 session shown" : "\(count) sessions shown"
     }
 
     private var connectionMessage: String {

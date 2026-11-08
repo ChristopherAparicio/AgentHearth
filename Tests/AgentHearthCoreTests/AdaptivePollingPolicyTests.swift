@@ -6,8 +6,8 @@ import XCTest
 final class AdaptivePollingPolicyTests: XCTestCase {
     private let policy = AdaptivePollingPolicy()
 
-    func testUsesFastPollingOnlyWhileAnAgentWorks() {
-        XCTAssertEqual(policy.interval(for: [snapshot(.working)]), 5)
+    func testPollsFastestWhileAnAgentWaitsOnTheUser() {
+        XCTAssertEqual(policy.interval(for: [snapshot(.working)]), 30)
         XCTAssertEqual(policy.interval(for: [snapshot(.waitingForApproval)]), 10)
         XCTAssertEqual(policy.interval(for: [snapshot(.idle)]), 20)
         XCTAssertEqual(policy.interval(for: []), 30)

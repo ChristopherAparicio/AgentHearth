@@ -344,6 +344,48 @@ final class CodexConnectorTests: XCTestCase {
         XCTAssertEqual(weekly.usedFraction, 0.4, accuracy: 0.0001)
     }
 
+    func testBetweenFullScansOnlyListedAndHookReportedRolloutsAreRead() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let clock = MutableClock(Date(timeIntervalSince1970: 2_000))
+        try writeRollout(at: root.appending(path: "2026/08/14/rollout-listed.jsonl"), sessionID: "listed", modifiedAt: 1_990)
+        let connector = CodexConnector(sessionsURL: root, fullScanInterval: 180, now: { clock.value })
+        let first = try await connector.snapshot()
+        XCTAssertEqual(first.sessions.map(\.id), ["listed"])
+
+        let hooked = root.appending(path: "2026/08/14/rollout-hooked.jsonl")
+        try writeRollout(at: hooked, sessionID: "hooked", modifiedAt: 1_995)
+        try writeRollout(at: root.appending(path: "2026/08/14/rollout-hookless.jsonl"), sessionID: "hookless", modifiedAt: 1_995)
+        // A Stop alone yields no hook-only session, so "hooked" can only come
+        // from its rollout.
+        try await connector.ingest(CodexHookEvent(
+            eventName: "Stop",
+            sessionID: "hooked",
+            transcriptPath: hooked.path,
+            sentAt: 1_996_000
+        ))
+
+        clock.value = Date(timeIntervalSince1970: 2_005)
+        let betweenScans = try await connector.snapshot()
+        XCTAssertEqual(Set(betweenScans.sessions.map(\.id)), ["listed", "hooked"])
+
+        // A session without hooks waits for the next full scan.
+        clock.value = Date(timeIntervalSince1970: 2_180)
+        let afterFullScan = try await connector.snapshot()
+        XCTAssertEqual(Set(afterFullScan.sessions.map(\.id)), ["listed", "hooked", "hookless"])
+    }
+
+    private func writeRollout(at url: URL, sessionID: String, modifiedAt: TimeInterval) throws {
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("""
+        {"timestamp":"1970-01-01T00:33:10.000Z","type":"session_meta","payload":{"id":"\(sessionID)","cwd":"/tmp/AgentHearth"}}
+        """.utf8).write(to: url)
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date(timeIntervalSince1970: modifiedAt)],
+            ofItemAtPath: url.path
+        )
+    }
+
     private func temporaryDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory.appending(path: "AgentHearth-Codex-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
